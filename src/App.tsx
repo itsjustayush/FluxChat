@@ -73,7 +73,7 @@ export default function App() {
         {
           id: `sys-${Date.now()}`,
           senderId: 'SYSTEM',
-          senderName: 'FLUX SYSTEM',
+          senderName: 'ULTRON SYSTEM',
           text: `Ephemeral encrypted chat room ${newOtp} created. Sharing is zero-cloud and strictly peer-to-peer.`,
           timestamp: Date.now(),
           type: 'system',
@@ -98,7 +98,7 @@ export default function App() {
         {
           id: `sys-${Date.now()}`,
           senderId: 'SYSTEM',
-          senderName: 'FLUX SYSTEM',
+          senderName: 'ULTRON SYSTEM',
           text: `Joined ephemeral room ${cleanOtp}. All text messages and file transfers are peer-to-peer and zero-storage.`,
           timestamp: Date.now(),
           type: 'system',
@@ -133,7 +133,7 @@ export default function App() {
           {
             id: `sys-${Date.now()}`,
             senderId: 'SYSTEM',
-            senderName: 'FLUX SYSTEM',
+            senderName: 'ULTRON SYSTEM',
             text: 'Ephemeral session cache wiped successfully.',
             timestamp: Date.now(),
             type: 'system',
@@ -197,7 +197,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="w-full py-6 text-center text-xs text-[#192837]/70 font-mono border-t border-[#192837]/10 mt-auto bg-white/40 flex flex-col sm:flex-row items-center justify-center gap-2">
-        <span>FLUX Chat • Built by</span>
+        <span>UltronChat • Built by</span>
         <a
           href="https://github.com/itsjustayush"
           target="_blank"

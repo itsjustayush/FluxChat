@@ -1,6 +1,6 @@
 import { UserSession } from '../types';
 
-const GUEST_SESSION_KEY = 'flux_chat_guest_session_v1';
+const GUEST_SESSION_KEY = 'ultron_chat_guest_session_v1';
 
 /**
  * Retrieves or creates a temporary session-based Guest identity.
@@ -10,7 +10,7 @@ export function getOrCreateGuestSession(): UserSession {
   if (typeof window === 'undefined') {
     return {
       id: 'guest_node_0',
-      email: 'guest@flux.chat',
+      email: 'guest@ultron.chat',
       identifier: 'Guest-0000',
       authenticated: true,
       nodeType: 'EPH_NODE_0.5.0',
@@ -40,7 +40,7 @@ export function getOrCreateGuestSession(): UserSession {
 
   const session: UserSession = {
     id: uuid,
-    email: `${nickname.toLowerCase()}@flux.chat`,
+    email: `${nickname.toLowerCase()}@ultron.chat`,
     identifier: nickname,
     authenticated: true,
     nodeType: 'EPH_NODE_0.5.0',
@@ -60,7 +60,7 @@ export function updateGuestNickname(newNickname: string): UserSession {
   const updated: UserSession = {
     ...current,
     identifier: cleanName,
-    email: `${cleanName.toLowerCase().replace(/\s+/g, '_')}@flux.chat`,
+    email: `${cleanName.toLowerCase().replace(/\s+/g, '_')}@ultron.chat`,
   };
   if (typeof window !== 'undefined') {
     sessionStorage.setItem(GUEST_SESSION_KEY, JSON.stringify(updated));

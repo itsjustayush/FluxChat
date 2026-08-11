@@ -36,10 +36,10 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`[FLUX P2P] Express + Vite + Signaling server listening on http://0.0.0.0:${PORT}`);
+    console.log(`[UltronChat] Express + Vite + Signaling server listening on http://0.0.0.0:${PORT}`);
   });
 }
 
 startServer().catch((err) => {
-  console.error('[FLUX P2P] Server error:', err);
+  console.error('[UltronChat] Server error:', err);
 });

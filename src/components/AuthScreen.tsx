@@ -121,7 +121,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
           <div className="flex items-center gap-2 mb-3">
             <div className="w-3.5 h-3.5 bg-[#7342E2] rounded-full shadow-[0_0_15px_#7342E2] animate-pulse"></div>
             <span className="font-mono text-xs font-bold text-[#7342E2] uppercase tracking-[0.25em]">
-              FLUX_P2P.AUTHENTICATION
+              ULTRON_CHAT.AUTHENTICATION
             </span>
           </div>
 

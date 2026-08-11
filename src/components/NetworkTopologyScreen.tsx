@@ -130,7 +130,7 @@ export const NetworkTopologyScreen: React.FC<NetworkTopologyScreenProps> = ({ ro
                   <span className="text-red-600 font-bold">~0.060 g CO2e/MB</span>
                 </div>
                 <div className="flex justify-between p-2.5 bg-white border border-[#192837]/10 rounded-xl">
-                  <span className="text-[#192837]/60">FLUX P2P Ephemeral:</span>
+                  <span className="text-[#192837]/60">UltronChat Ephemeral:</span>
                   <span className="text-emerald-600 font-bold">~0.005 g CO2e/MB</span>
                 </div>
               </div>

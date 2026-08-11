@@ -1,5 +1,5 @@
 {
-  "name": "FLUX Chat",
+  "name": "UltronChat",
   "description": "Ephemeral, real-time messaging and P2P file sharing platform in guest-only mode with zero persistent data storage.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

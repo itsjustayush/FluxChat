@@ -81,7 +81,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               </span>
             </div>
             <h1 className="text-2xl md:text-3xl font-heading font-bold text-[#192837] tracking-tight">
-              Welcome to FLUX Chat
+              Welcome to UltronChat
             </h1>
             <p className="font-sans text-sm text-[#192837]/80 mt-1 max-w-xl">
               Zero login, zero database history, 100% ephemeral P2P text messaging and direct file transfers.

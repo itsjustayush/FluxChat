@@ -37,7 +37,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="text-xl font-bold font-heading text-[#192837] tracking-tighter hover:opacity-90 transition-opacity flex items-center gap-2 cursor-pointer"
           >
             <div className="w-3 h-3 bg-[#7342E2] rounded-full shadow-[0_0_12px_#7342E2] animate-pulse"></div>
-            <span>FLUX<span className="text-[#7342E2]">.CHAT</span></span>
+            <span>ULTRON<span className="text-[#7342E2]">.CHAT</span></span>
           </button>
 
           {/* Desktop Navigation Links */}

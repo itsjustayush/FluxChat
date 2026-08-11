@@ -101,7 +101,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
     {
       id: 'welcome-1',
       senderId: 'SYSTEM',
-      senderName: 'FLUX SYSTEM',
+      senderName: 'ULTRON SYSTEM',
       text: `Ephemeral encrypted room ${room.id} active. Zero database storage — all messages and files disappear when room closes.`,
       timestamp: Date.now(),
       type: 'system',
