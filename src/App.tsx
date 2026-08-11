@@ -196,8 +196,18 @@ export default function App() {
       )}
 
       {/* Footer */}
-      <footer className="w-full py-6 text-center text-xs text-[#192837]/70 font-mono border-t border-[#192837]/10 mt-auto bg-white/40">
-        FLUX Chat • Guest-Only Ephemeral P2P Messaging & File Share • Zero Storage
+      <footer className="w-full py-6 text-center text-xs text-[#192837]/70 font-mono border-t border-[#192837]/10 mt-auto bg-white/40 flex flex-col sm:flex-row items-center justify-center gap-2">
+        <span>FLUX Chat • Built by</span>
+        <a
+          href="https://github.com/itsjustayush"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[#7342E2] font-bold hover:underline flex items-center gap-1"
+        >
+          <span>Ayush Bhattacharya</span>
+          <span className="material-symbols-outlined text-sm">open_in_new</span>
+        </a>
+        <span className="hidden sm:inline">• Ephemeral P2P Messaging & File Share</span>
       </footer>
     </div>
   );

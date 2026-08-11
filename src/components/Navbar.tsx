@@ -38,9 +38,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <div className="w-3 h-3 bg-[#7342E2] rounded-full shadow-[0_0_12px_#7342E2] animate-pulse"></div>
             <span>FLUX<span className="text-[#7342E2]">.CHAT</span></span>
-            <span className="hidden sm:inline-block font-mono text-[10px] bg-[#7342E2]/10 text-[#7342E2] px-2 py-0.5 rounded-full font-semibold border border-[#7342E2]/20">
-              GUEST MODE
-            </span>
           </button>
 
           {/* Desktop Navigation Links */}

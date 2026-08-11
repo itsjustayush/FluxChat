@@ -14,6 +14,9 @@ export interface SignalMessage {
     | 'answer'
     | 'candidate'
     | 'chat'
+    | 'chat_ack'
+    | 'typing'
+    | 'reaction'
     | 'room_state'
     | 'error'
     | 'ping'
@@ -143,7 +146,7 @@ export class SignalingServer {
   private handleHttpSignalMessage(message: SignalMessage) {
     if (message.type === 'join') {
       this.handleJoin(null, message);
-    } else if (['offer', 'answer', 'candidate', 'chat'].includes(message.type)) {
+    } else if (['offer', 'answer', 'candidate', 'chat', 'chat_ack', 'typing', 'reaction'].includes(message.type)) {
       if (message.targetPeerId) {
         this.relayMessage(null, message);
       } else if (message.roomId) {
@@ -194,6 +197,9 @@ export class SignalingServer {
         this.relayMessage(ws, message);
         break;
       case 'chat':
+      case 'chat_ack':
+      case 'typing':
+      case 'reaction':
         if (message.targetPeerId) {
           this.relayMessage(ws, message);
         } else if (message.roomId) {

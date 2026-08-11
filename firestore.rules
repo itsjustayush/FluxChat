@@ -38,6 +38,14 @@ service cloud.firestore {
       match /bundleItems/{itemId} {
         allow read, write: if true;
       }
+
+      match /messages/{messageId} {
+        allow read, write: if true;
+      }
+
+      match /{subcollection=**} {
+        allow read, write: if true;
+      }
     }
   }
 }

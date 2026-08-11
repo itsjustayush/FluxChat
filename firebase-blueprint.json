@@ -54,6 +54,13 @@
     "/rooms/{roomId}/bundleItems/{itemId}": {
       "schema": { "$ref": "#/entities/BundleItem" },
       "description": "Files shared in a specific room"
+    },
+    "/rooms/{roomId}/messages/{messageId}": {
+      "schema": {
+        "title": "ChatMessage",
+        "type": "object"
+      },
+      "description": "Ephemeral chat messages in a room"
     }
   }
 }

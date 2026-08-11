@@ -69,7 +69,9 @@ export interface ChatMessage {
   text: string;
   timestamp: number;
   type?: 'text' | 'system' | 'file_notice';
+  status?: 'sending' | 'sent' | 'delivered' | 'read';
   encryptedHash?: string;
+  reactions?: Record<string, string[]>; // emoji -> array of peerIds who reacted
   attachment?: {
     fileName: string;
     fileSize: number;

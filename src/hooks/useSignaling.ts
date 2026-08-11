@@ -220,6 +220,9 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
         case 'answer':
         case 'candidate':
         case 'chat':
+        case 'chat_ack':
+        case 'typing':
+        case 'reaction':
           callbacksRef.current.onSignal?.(message);
           break;
 

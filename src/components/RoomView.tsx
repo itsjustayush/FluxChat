@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import crc32 from 'js-crc32';
 import { collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -18,6 +18,7 @@ import {
   formatRoomOTPDisplay,
 } from '../lib/p2pEngine';
 import { QRCodeModal } from './QRCodeModal';
+import { ActivityToastContainer, ActivityToastData } from './ActivityToast';
 
 async function arrayBufferToDataUrl(buffer: ArrayBuffer, mimeType: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -56,6 +57,8 @@ interface ErrorToast {
   message: string;
 }
 
+const QUICK_EMOJIS = ['👍', '❤️', '🔥', '🎉', '😮', '😂'];
+
 export const RoomView: React.FC<RoomViewProps> = ({
   room,
   session,
@@ -67,7 +70,29 @@ export const RoomView: React.FC<RoomViewProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [webrtcState, setWebrtcState] = useState<WebRTCConnectionState>('connected');
   const [errorToasts, setErrorToasts] = useState<ErrorToast[]>([]);
+  const [activityToasts, setActivityToasts] = useState<ActivityToastData[]>([]);
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+
+  const addActivityToast = (type: 'join' | 'leave' | 'info', peerName: string, peerId?: string, message?: string) => {
+    const newToast: ActivityToastData = {
+      id: `act-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      type,
+      peerName,
+      peerId,
+      message: message || (type === 'join' ? 'joined the room' : type === 'leave' ? 'left the room' : 'room activity update'),
+      timestamp: Date.now(),
+    };
+
+    setActivityToasts((prev) => [...prev.slice(-4), newToast]);
+
+    setTimeout(() => {
+      setActivityToasts((prev) => prev.filter((t) => t.id !== newToast.id));
+    }, 4500);
+  };
+
+  const dismissActivityToast = (id: string) => {
+    setActivityToasts((prev) => prev.filter((t) => t.id !== id));
+  };
   const [showPresenceList, setShowPresenceList] = useState(false);
   const [activeTab, setActiveTab] = useState<'CHAT' | 'FILES'>('CHAT');
 
@@ -89,9 +114,138 @@ export const RoomView: React.FC<RoomViewProps> = ({
   // Real-time peers list
   const [peersList, setPeersList] = useState<Peer[]>(room.activePeers || []);
   const peersListRef = useRef<Peer[]>(peersList);
+  const prevPeersListRef = useRef<Peer[]>([]);
+
   useEffect(() => {
     peersListRef.current = peersList;
+
+    const prevPeers = prevPeersListRef.current;
+    if (prevPeers.length > 0) {
+      // Newly joined peers
+      peersList.forEach((peer) => {
+        if (!peer.isYou && !prevPeers.some((p) => p.id === peer.id)) {
+          addActivityToast('join', peer.name || `Peer-${peer.id.substring(0, 4).toUpperCase()}`, peer.id, 'joined the room');
+        }
+      });
+
+      // Peers who left
+      prevPeers.forEach((prevPeer) => {
+        if (!prevPeer.isYou && !peersList.some((p) => p.id === prevPeer.id)) {
+          addActivityToast('leave', prevPeer.name || `Peer-${prevPeer.id.substring(0, 4).toUpperCase()}`, prevPeer.id, 'left the room');
+        }
+      });
+    }
+    prevPeersListRef.current = peersList;
   }, [peersList]);
+
+  // Typing Indicator State & Refs
+  const [typingPeersMap, setTypingPeersMap] = useState<Record<string, string>>({});
+  const typingTimeoutsRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const localTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isCurrentlyTypingRef = useRef<boolean>(false);
+
+  // Message Reactions State & Logic
+  const [activeEmojiPickerMsgId, setActiveEmojiPickerMsgId] = useState<string | null>(null);
+
+  const applyReactionUpdate = useCallback((messageId: string, emoji: string, updatedPeers: string[]) => {
+    setChatMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id !== messageId) return msg;
+        const currentReactions = { ...(msg.reactions || {}) };
+        if (updatedPeers && updatedPeers.length > 0) {
+          currentReactions[emoji] = updatedPeers;
+        } else {
+          delete currentReactions[emoji];
+        }
+        return { ...msg, reactions: currentReactions };
+      })
+    );
+  }, []);
+
+  const handleToggleReaction = (messageId: string, emoji: string) => {
+    setChatMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id !== messageId) return msg;
+
+        const reactions = { ...(msg.reactions || {}) };
+        const currentPeers = reactions[emoji] || [];
+        const hasReacted = currentPeers.includes(localPeerId);
+
+        const newPeers = hasReacted
+          ? currentPeers.filter((id) => id !== localPeerId)
+          : [...currentPeers, localPeerId];
+
+        if (newPeers.length > 0) {
+          reactions[emoji] = newPeers;
+        } else {
+          delete reactions[emoji];
+        }
+
+        // Broadcast reaction via socket signal
+        sendSignal({
+          type: 'reaction',
+          roomId: room.id,
+          peerId: localPeerId,
+          data: { messageId, emoji, updatedPeers: newPeers },
+        });
+
+        // Broadcast reaction via WebRTC DataChannel
+        if (peerEngineRef.current?.dataChannel?.readyState === 'open') {
+          try {
+            peerEngineRef.current.dataChannel.send(
+              JSON.stringify({
+                type: 'REACTION',
+                messageId,
+                emoji,
+                peerId: localPeerId,
+                updatedPeers: newPeers,
+              })
+            );
+          } catch (e) {
+            // ignore
+          }
+        }
+
+        // Sync reaction to Firestore message doc
+        const cleanRoom = room.id.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+        setDoc(
+          doc(db, 'rooms', cleanRoom, 'messages', messageId),
+          { reactions },
+          { merge: true }
+        ).catch(() => {});
+
+        return { ...msg, reactions };
+      })
+    );
+  };
+
+  const handleRemoteTypingStatus = (peerId: string, isTyping: boolean, senderName?: string) => {
+    if (!peerId || peerId === localPeerId) return;
+
+    if (typingTimeoutsRef.current[peerId]) {
+      clearTimeout(typingTimeoutsRef.current[peerId]);
+      delete typingTimeoutsRef.current[peerId];
+    }
+
+    if (isTyping) {
+      const peerName = senderName || `Peer-${peerId.substring(0, 4).toUpperCase()}`;
+      setTypingPeersMap((prev) => ({ ...prev, [peerId]: peerName }));
+
+      typingTimeoutsRef.current[peerId] = setTimeout(() => {
+        setTypingPeersMap((prev) => {
+          const next = { ...prev };
+          delete next[peerId];
+          return next;
+        });
+      }, 3500);
+    } else {
+      setTypingPeersMap((prev) => {
+        const next = { ...prev };
+        delete next[peerId];
+        return next;
+      });
+    }
+  };
 
   const [logs, setLogs] = useState<SystemLogEntry[]>([]);
   const [transfer, setTransfer] = useState<TransferProgress | null>(null);
@@ -121,10 +275,10 @@ export const RoomView: React.FC<RoomViewProps> = ({
     });
   };
 
-  // Auto scroll chat to bottom when new messages arrive
+  // Auto scroll chat to bottom when new messages arrive or typing status changes
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
+  }, [chatMessages, typingPeersMap]);
 
   const { sendSignal, sendOffer, sendAnswer, sendCandidate } = useSignaling({
     signalingUrl: '/ws',
@@ -196,12 +350,50 @@ export const RoomView: React.FC<RoomViewProps> = ({
     onSignal: async (msg) => {
       const peerEngine = peerEngineRef.current;
 
+      if (msg.type === 'reaction' && msg.data) {
+        const { messageId, emoji, updatedPeers } = msg.data;
+        if (messageId && emoji && Array.isArray(updatedPeers)) {
+          applyReactionUpdate(messageId, emoji, updatedPeers);
+        }
+        return;
+      }
+
+      if (msg.type === 'typing' && msg.data) {
+        const { peerId, isTyping, senderName } = msg.data;
+        const sender = peerId || msg.peerId;
+        if (sender && sender !== localPeerId) {
+          handleRemoteTypingStatus(sender, Boolean(isTyping), senderName);
+        }
+        return;
+      }
+
       if (msg.type === 'chat' && msg.data) {
         const chatMsg = msg.data as ChatMessage;
         setChatMessages((prev) => {
           if (prev.some((m) => m.id === chatMsg.id)) return prev;
-          return [...prev, chatMsg];
+          return [...prev, { ...chatMsg, status: 'read' }];
         });
+
+        // Automatically send ACK back if message came from another peer
+        if (chatMsg.senderId !== localPeerId) {
+          sendSignal({
+            type: 'chat_ack',
+            roomId: room.id,
+            peerId: localPeerId,
+            targetPeerId: chatMsg.senderId,
+            data: { messageId: chatMsg.id, status: 'read' },
+          });
+        }
+        return;
+      }
+
+      if (msg.type === 'chat_ack' && msg.data) {
+        const { messageId, status } = msg.data;
+        if (messageId) {
+          setChatMessages((prev) =>
+            prev.map((m) => (m.id === messageId ? { ...m, status: status || 'read' } : m))
+          );
+        }
         return;
       }
 
@@ -228,18 +420,36 @@ export const RoomView: React.FC<RoomViewProps> = ({
     const cleanRoom = room.id.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
     const msgsCollRef = collection(db, 'rooms', cleanRoom, 'messages');
 
-    const unsub = onSnapshot(msgsCollRef, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added') {
-          const data = change.doc.data() as ChatMessage;
-          if (!data || !data.id) return;
-          setChatMessages((prev) => {
-            if (prev.some((m) => m.id === data.id)) return prev;
-            return [...prev, data];
-          });
-        }
-      });
-    });
+    const unsub = onSnapshot(
+      msgsCollRef,
+      (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'added' || change.type === 'modified') {
+            const data = change.doc.data() as ChatMessage;
+            if (!data || !data.id) return;
+            setChatMessages((prev) => {
+              const idx = prev.findIndex((m) => m.id === data.id);
+              if (idx >= 0) {
+                const copy = [...prev];
+                copy[idx] = { ...copy[idx], ...data };
+                return copy;
+              }
+              return [...prev, data];
+            });
+
+            // Mark read in Firestore if from another peer
+            if (change.type === 'added' && data.senderId && data.senderId !== localPeerId && data.type !== 'system') {
+              if (data.status !== 'read') {
+                setDoc(doc(db, 'rooms', cleanRoom, 'messages', data.id), { status: 'read' }, { merge: true }).catch(() => {});
+              }
+            }
+          }
+        });
+      },
+      (error) => {
+        console.warn('Firestore msgs onSnapshot error:', error);
+      }
+    );
 
     return () => unsub();
   }, [room.id]);
@@ -250,51 +460,57 @@ export const RoomView: React.FC<RoomViewProps> = ({
     const cleanRoom = room.id.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
     const bundleCollRef = collection(db, 'rooms', cleanRoom, 'bundleItems');
 
-    const unsub = onSnapshot(bundleCollRef, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added') {
-          const data = change.doc.data();
-          if (!data || !data.id) return;
+    const unsub = onSnapshot(
+      bundleCollRef,
+      (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'added') {
+            const data = change.doc.data();
+            if (!data || !data.id) return;
 
-          const exists = bundleItemsRef.current.some((item) => item.id === data.id);
-          if (exists) return;
+            const exists = bundleItemsRef.current.some((item) => item.id === data.id);
+            if (exists) return;
 
-          let rawBlob: Blob | undefined;
-          let blobUrl: string | undefined;
+            let rawBlob: Blob | undefined;
+            let blobUrl: string | undefined;
 
-          if (data.dataUrl) {
-            rawBlob = dataUrlToBlob(data.dataUrl);
-            blobUrl = URL.createObjectURL(rawBlob);
-          } else if (data.textContent) {
-            rawBlob = new Blob([data.textContent], { type: data.type || 'text/plain' });
-            blobUrl = URL.createObjectURL(rawBlob);
+            if (data.dataUrl) {
+              rawBlob = dataUrlToBlob(data.dataUrl);
+              blobUrl = URL.createObjectURL(rawBlob);
+            } else if (data.textContent) {
+              rawBlob = new Blob([data.textContent], { type: data.type || 'text/plain' });
+              blobUrl = URL.createObjectURL(rawBlob);
+            }
+
+            const newItem: BundleItem = {
+              id: data.id,
+              name: data.name,
+              size: data.size,
+              type: data.type,
+              fileTypeLabel: data.fileTypeLabel,
+              fileId: data.fileId,
+              dimensions: data.dimensions,
+              sha256: data.sha256,
+              encryptedHash: data.encryptedHash,
+              blobUrl,
+              rawBlob,
+              textContent: data.textContent,
+              uploaderId: data.uploaderId,
+              uploaderName: data.uploaderName,
+              timestamp: data.timestamp,
+              carbonFootprintGrams: data.carbonFootprintGrams,
+              peerSeeds: data.peerSeeds || 1,
+              encryptionStatus: 'AES-256-GCM VERIFIED',
+            };
+
+            onAddBundleItem(newItem);
           }
-
-          const newItem: BundleItem = {
-            id: data.id,
-            name: data.name,
-            size: data.size,
-            type: data.type,
-            fileTypeLabel: data.fileTypeLabel,
-            fileId: data.fileId,
-            dimensions: data.dimensions,
-            sha256: data.sha256,
-            encryptedHash: data.encryptedHash,
-            blobUrl,
-            rawBlob,
-            textContent: data.textContent,
-            uploaderId: data.uploaderId,
-            uploaderName: data.uploaderName,
-            timestamp: data.timestamp,
-            carbonFootprintGrams: data.carbonFootprintGrams,
-            peerSeeds: data.peerSeeds || 1,
-            encryptionStatus: 'AES-256-GCM VERIFIED',
-          };
-
-          onAddBundleItem(newItem);
-        }
-      });
-    });
+        });
+      },
+      (error) => {
+        console.warn('Firestore bundleItems onSnapshot error:', error);
+      }
+    );
 
     return () => unsub();
   }, [room.id]);
@@ -316,8 +532,29 @@ export const RoomView: React.FC<RoomViewProps> = ({
             const chatMsg = parsed.data as ChatMessage;
             setChatMessages((prev) => {
               if (prev.some((m) => m.id === chatMsg.id)) return prev;
-              return [...prev, chatMsg];
+              return [...prev, { ...chatMsg, status: 'read' }];
             });
+
+            if (chatMsg.senderId !== localPeerId && peerEngineRef.current?.dataChannel?.readyState === 'open') {
+              try {
+                peerEngineRef.current.dataChannel.send(
+                  JSON.stringify({ type: 'CHAT_ACK', messageId: chatMsg.id, status: 'read' })
+                );
+              } catch (e) {
+                // ignore
+              }
+            }
+          } else if (parsed.type === 'TYPING_STATUS') {
+            const { peerId, isTyping, senderName } = parsed;
+            if (peerId && peerId !== localPeerId) {
+              handleRemoteTypingStatus(peerId, Boolean(isTyping), senderName);
+            }
+          } else if (parsed.type === 'REACTION' && parsed.messageId && parsed.emoji) {
+            applyReactionUpdate(parsed.messageId, parsed.emoji, parsed.updatedPeers || []);
+          } else if (parsed.type === 'CHAT_ACK' && parsed.messageId) {
+            setChatMessages((prev) =>
+              prev.map((m) => (m.id === parsed.messageId ? { ...m, status: parsed.status || 'read' } : m))
+            );
           } else if (parsed.type === 'BUNDLE_ITEM_SHARE' && parsed.item) {
             const dataItem = parsed.item;
             const exists = bundleItemsRef.current.some((i) => i.id === dataItem.id);
@@ -378,10 +615,74 @@ export const RoomView: React.FC<RoomViewProps> = ({
     };
   }, [room.id, localPeerId]);
 
+  // Broadcast local typing status
+  const broadcastTypingStatus = (isTyping: boolean) => {
+    const myName = session?.identifier || 'Guest';
+    const payload = { isTyping, senderName: myName, peerId: localPeerId };
+
+    sendSignal({
+      type: 'typing',
+      roomId: room.id,
+      peerId: localPeerId,
+      data: payload,
+    });
+
+    if (peerEngineRef.current?.dataChannel?.readyState === 'open') {
+      try {
+        peerEngineRef.current.dataChannel.send(
+          JSON.stringify({ type: 'TYPING_STATUS', ...payload })
+        );
+      } catch (e) {
+        // ignore
+      }
+    }
+  };
+
+  const handleChatInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setChatInput(val);
+
+    if (val.trim()) {
+      if (!isCurrentlyTypingRef.current) {
+        isCurrentlyTypingRef.current = true;
+        broadcastTypingStatus(true);
+      }
+
+      if (localTypingTimeoutRef.current) {
+        clearTimeout(localTypingTimeoutRef.current);
+      }
+
+      localTypingTimeoutRef.current = setTimeout(() => {
+        isCurrentlyTypingRef.current = false;
+        broadcastTypingStatus(false);
+      }, 2500);
+    } else {
+      if (isCurrentlyTypingRef.current) {
+        isCurrentlyTypingRef.current = false;
+        broadcastTypingStatus(false);
+      }
+      if (localTypingTimeoutRef.current) {
+        clearTimeout(localTypingTimeoutRef.current);
+      }
+    }
+  };
+
   // Send Chat Message
   const handleSendChatMessage = async (textToSend?: string) => {
     const content = (textToSend || chatInput).trim();
     if (!content) return;
+
+    // Clear typing indicator state
+    if (isCurrentlyTypingRef.current) {
+      isCurrentlyTypingRef.current = false;
+      broadcastTypingStatus(false);
+    }
+    if (localTypingTimeoutRef.current) {
+      clearTimeout(localTypingTimeoutRef.current);
+    }
+
+    const hasRemotePeers = peersList.some((p) => !p.isYou);
+    const initialStatus: 'sent' | 'delivered' = hasRemotePeers ? 'delivered' : 'sent';
 
     const chatMsg: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -390,6 +691,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
       text: content,
       timestamp: Date.now(),
       type: 'text',
+      status: initialStatus,
       encryptedHash: 'AES-256-GCM',
     };
 
@@ -671,7 +973,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
               return (
                 <div
                   key={msg.id}
-                  className={`flex flex-col ${isYou ? 'items-end' : 'items-start'}`}
+                  className={`flex flex-col relative group/msg ${isYou ? 'items-end' : 'items-start'}`}
                 >
                   <div className="flex items-center gap-1.5 mb-1 px-1">
                     <span className="font-mono text-[11px] font-bold text-[#192837]/70">
@@ -682,37 +984,180 @@ export const RoomView: React.FC<RoomViewProps> = ({
                     </span>
                   </div>
 
-                  <div
-                    className={`max-w-[85%] p-3.5 rounded-2xl text-sm font-sans leading-relaxed break-words shadow-2xs ${
-                      isYou
-                        ? 'bg-[#7342E2] text-white rounded-tr-none'
-                        : 'bg-white text-[#192837] border border-[#192837]/15 rounded-tl-none'
-                    }`}
-                  >
-                    {msg.text}
+                  <div className="relative max-w-[85%] group/bubble">
+                    {/* Hover & Click Reaction Floating Toolbar */}
+                    <div
+                      className={`absolute -top-4 z-20 flex items-center gap-1 bg-white border border-[#192837]/15 rounded-full px-2 py-1 shadow-md transition-all duration-200 ${
+                        isYou ? 'right-2' : 'left-2'
+                      } ${
+                        activeEmojiPickerMsgId === msg.id
+                          ? 'opacity-100 scale-100 pointer-events-auto'
+                          : 'opacity-0 scale-95 group-hover/bubble:opacity-100 group-hover/bubble:scale-100 pointer-events-none group-hover/bubble:pointer-events-auto'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1 pr-1 border-r border-[#192837]/10">
+                        {QUICK_EMOJIS.map((emoji) => {
+                          const currentPeers = msg.reactions?.[emoji] || [];
+                          const hasReacted = currentPeers.includes(localPeerId);
+                          return (
+                            <button
+                              key={emoji}
+                              onClick={() => {
+                                handleToggleReaction(msg.id, emoji);
+                                setActiveEmojiPickerMsgId(null);
+                              }}
+                              className={`text-sm hover:scale-130 transition-transform p-0.5 rounded-full cursor-pointer leading-none ${
+                                hasReacted ? 'bg-[#7342E2]/20 scale-110' : 'hover:bg-[#192837]/5'
+                              }`}
+                              title={`React with ${emoji}`}
+                            >
+                              {emoji}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <button
+                        onClick={() =>
+                          setActiveEmojiPickerMsgId(
+                            activeEmojiPickerMsgId === msg.id ? null : msg.id
+                          )
+                        }
+                        className="text-[10px] font-mono font-bold text-[#7342E2] hover:bg-[#7342E2]/10 px-1.5 py-0.5 rounded-md transition-colors flex items-center gap-0.5 cursor-pointer"
+                        title="React to message"
+                      >
+                        <span className="material-symbols-outlined text-xs">add_reaction</span>
+                        <span className="hidden sm:inline">React</span>
+                      </button>
+                    </div>
 
-                    {/* Attachment preview inside chat bubble */}
-                    {msg.attachment && (
-                      <div className="mt-2.5 pt-2 border-t border-white/20 flex items-center justify-between gap-3 bg-black/10 p-2 rounded-xl">
-                        <div className="flex items-center gap-2 overflow-hidden">
-                          <span className="material-symbols-outlined text-lg">attachment</span>
-                          <span className="font-mono text-xs font-bold truncate">{msg.attachment.fileName}</span>
+                    <div
+                      className={`p-3.5 rounded-2xl text-sm font-sans leading-relaxed break-words shadow-2xs ${
+                        isYou
+                          ? 'bg-[#7342E2] text-white rounded-tr-none'
+                          : 'bg-white text-[#192837] border border-[#192837]/15 rounded-tl-none'
+                      }`}
+                    >
+                      {msg.text}
+
+                      {/* Attachment preview inside chat bubble */}
+                      {msg.attachment && (
+                        <div className="mt-2.5 pt-2 border-t border-white/20 flex items-center justify-between gap-3 bg-black/10 p-2 rounded-xl">
+                          <div className="flex items-center gap-2 overflow-hidden">
+                            <span className="material-symbols-outlined text-lg">attachment</span>
+                            <span className="font-mono text-xs font-bold truncate">{msg.attachment.fileName}</span>
+                          </div>
+                          {msg.attachment.blobUrl && (
+                            <a
+                              href={msg.attachment.blobUrl}
+                              download={msg.attachment.fileName}
+                              className="bg-white text-[#192837] hover:bg-emerald-400 font-mono text-[10px] font-bold px-2 py-1 rounded-md shrink-0 transition-colors"
+                            >
+                              DOWNLOAD
+                            </a>
+                          )}
                         </div>
-                        {msg.attachment.blobUrl && (
-                          <a
-                            href={msg.attachment.blobUrl}
-                            download={msg.attachment.fileName}
-                            className="bg-white text-[#192837] hover:bg-emerald-400 font-mono text-[10px] font-bold px-2 py-1 rounded-md shrink-0 transition-colors"
-                          >
-                            DOWNLOAD
-                          </a>
-                        )}
+                      )}
+
+                      {/* Active Reactions List */}
+                      {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-2.5 pt-2 border-t border-black/10">
+                          {Object.entries(msg.reactions).map(([emoji, peerIdsVal]) => {
+                            const peerIds = (peerIdsVal as string[]) || [];
+                            if (!peerIds || peerIds.length === 0) return null;
+                            const isMyReaction = peerIds.includes(localPeerId);
+                            const names = peerIds.map((id) => {
+                              if (id === localPeerId) return 'You';
+                              const found = peersList.find((p) => p.id === id);
+                              return found?.name || `Peer-${id.substring(0, 4).toUpperCase()}`;
+                            });
+
+                            return (
+                              <button
+                                key={emoji}
+                                onClick={() => handleToggleReaction(msg.id, emoji)}
+                                title={`Reacted by: ${names.join(', ')}`}
+                                className={`inline-flex items-center gap-1 font-mono text-[11px] font-bold px-2 py-0.5 rounded-full transition-all cursor-pointer ${
+                                  isMyReaction
+                                    ? isYou
+                                      ? 'bg-white text-[#7342E2] shadow-xs'
+                                      : 'bg-[#7342E2] text-white shadow-xs'
+                                    : isYou
+                                    ? 'bg-black/20 text-white/90 hover:bg-black/30'
+                                    : 'bg-[#F2F2EE] text-[#192837] hover:bg-[#192837]/10 border border-[#192837]/15'
+                                }`}
+                              >
+                                <span>{emoji}</span>
+                                <span>{peerIds.length}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Delivery & Read Status for outgoing messages */}
+                    {isYou && (
+                      <div className="mt-1.5 pt-1 border-t border-white/10 flex justify-end items-center gap-1">
+                        {(() => {
+                          const st = msg.status || 'sent';
+                          if (st === 'sending') {
+                            return (
+                              <span className="inline-flex items-center gap-1 font-mono text-[10px] text-white/70" title="Sending message...">
+                                <span className="material-symbols-outlined text-[13px] animate-spin">sync</span>
+                                <span>Sending</span>
+                              </span>
+                            );
+                          }
+                          if (st === 'sent') {
+                            return (
+                              <span className="inline-flex items-center gap-1 font-mono text-[10px] text-white/70" title="Sent to room channel (Single check)">
+                                <span className="material-symbols-outlined text-[13px]">check</span>
+                                <span>Sent</span>
+                              </span>
+                            );
+                          }
+                          if (st === 'delivered') {
+                            return (
+                              <span className="inline-flex items-center gap-1 font-mono text-[10px] text-white/90" title="Delivered to room peers (Double check)">
+                                <span className="material-symbols-outlined text-[13px]">done_all</span>
+                                <span>Delivered</span>
+                              </span>
+                            );
+                          }
+                          if (st === 'read') {
+                            return (
+                              <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-300 font-bold" title="Read confirmed by peer (Double check)">
+                                <span className="material-symbols-outlined text-[13px] font-bold">done_all</span>
+                                <span>Read</span>
+                              </span>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                     )}
                   </div>
                 </div>
-              );
+              </div>
+            );
             })}
+            {/* Typing Indicator */}
+            {Object.keys(typingPeersMap).length > 0 && (
+              <div className="flex items-center gap-2 text-xs font-mono text-[#7342E2] bg-[#7342E2]/10 py-1.5 px-3 rounded-full w-fit mb-2 border border-[#7342E2]/20 shadow-xs animate-fade-in">
+                <div className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 bg-[#7342E2] rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                  <span className="w-1.5 h-1.5 bg-[#7342E2] rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                  <span className="w-1.5 h-1.5 bg-[#7342E2] rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                </div>
+                <span className="font-semibold">
+                  {(() => {
+                    const names = Object.values(typingPeersMap);
+                    if (names.length === 1) return `${names[0]} is typing...`;
+                    if (names.length === 2) return `${names[0]} and ${names[1]} are typing...`;
+                    return `${names[0]} and ${names.length - 1} others are typing...`;
+                  })()}
+                </span>
+              </div>
+            )}
             <div ref={chatBottomRef} />
           </div>
 
@@ -755,7 +1200,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
             <input
               type="text"
               value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
+              onChange={handleChatInputChange}
               placeholder="Type your ephemeral message..."
               className="flex-1 bg-white border border-[#192837]/20 rounded-2xl px-4 py-3 text-sm font-sans focus:outline-none focus:border-[#7342E2] focus:ring-1 focus:ring-[#7342E2] transition-all"
             />
@@ -865,6 +1310,12 @@ export const RoomView: React.FC<RoomViewProps> = ({
           onClose={() => setIsQrModalOpen(false)}
         />
       )}
+
+      {/* Activity Toasts (Join/Leave notifications) */}
+      <ActivityToastContainer
+        toasts={activityToasts}
+        onDismiss={dismissActivityToast}
+      />
 
       {/* Error Toasts */}
       {errorToasts.length > 0 && (
