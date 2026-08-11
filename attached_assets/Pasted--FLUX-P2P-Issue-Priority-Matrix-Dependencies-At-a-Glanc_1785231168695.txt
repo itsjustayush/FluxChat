@@ -1,0 +1,358 @@
+# FLUX_P2P: Issue Priority Matrix & Dependencies
+
+## 🎯 At-a-Glance Summary
+
+**Total Issues Found:** 13  
+**Critical:** 3 | **High:** 4 | **Medium:** 6
+
+---
+
+## 📊 Priority Matrix (Start Here)
+
+```
+                    ┌─────────────────────────────────────────┐
+                    │     EFFORT REQUIRED (Scale 1-10)        │
+                    │  LOW      MEDIUM      HIGH     VERY HIGH│
+        IMPACT      │   ↓         ↓          ↓         ↓      │
+        HIGH    ↑   │  [2] → [3] → [4,6] → [1,5,7]  FOCUS! │
+        MEDIUM  │   │  [8,9,10] → [11,12,13]              │
+        LOW     ↓   │  [Enhancement 1-6]                    │
+                    └─────────────────────────────────────────┘
+
+[1] STUN/TURN Failover     (Critical, High Effort, Highest Impact)
+[2] Signaling Server       (Critical, High Effort, Core Feature)
+[3] Room Lifecycle         (Critical, Medium Effort, Stability)
+[4] Error Handling         (High, Medium Effort, UX)
+[5] Input Validation       (High, Low Effort, Security)
+[6] File Transfer SM       (High, Medium Effort, Reliability)
+[7] Monitoring             (High, Medium Effort, Ops)
+[8] Password Vault         (Medium, High Effort, Feature)
+[9] Mobile Testing         (Medium, Medium Effort, UX)
+[10] Offline Resilience    (Medium, Medium Effort, Reliability)
+[11] Key Management        (Medium, Medium Effort, Security)
+[12] QR Code Security      (Medium, Low Effort, Security)
+[13] TypeScript Strict     (Medium, Low Effort, Quality)
+```
+
+---
+
+## 🔗 Dependency Graph
+
+```
+                          Project Start
+                             │
+                             ▼
+              ┌──────────────────────────────┐
+              │  STUN/TURN Failover [1]      │
+              │  (MUST COMPLETE FIRST)       │
+              └─────────┬────────────────────┘
+                        │
+                        ▼
+              ┌──────────────────────────────┐
+              │  Signaling Server [2]        │
+              │  (Unblocks P2P Discovery)    │
+              └─────────┬────────────────────┘
+                        │
+        ┌───────────────┼───────────────┐
+        ▼               ▼               ▼
+   [3] Room       [4] Error         [5] Input
+   Lifecycle      Handling          Validation
+   ┌─────────┐    ┌────────┐        ┌──────┐
+   │BLOCKING │    │        │        │ SECS │
+   │(Others) │    │        │        │      │
+   └─────────┘    └────────┘        └──────┘
+        │               │               │
+        └───────────────┼───────────────┘
+                        ▼
+              ┌──────────────────────────────┐
+              │  File Transfer SM [6]        │
+              │  (Ready for high load)       │
+              └─────────┬────────────────────┘
+                        │
+        ┌───────────────┼───────────────┐
+        ▼               ▼               ▼
+   [7] Monitoring [8] Vault       [9] Mobile
+   ┌──────────┐    ┌──────┐       ┌──────┐
+   │BLIND →   │    │ FEAT │       │  UX  │
+   │SIGHTED   │    │      │       │      │
+   └──────────┘    └──────┘       └──────┘
+        │               │               │
+        └───────────────┼───────────────┘
+                        ▼
+              [10,11,12,13] Polish & Enhancements
+              
+Parallel Track: Security Hardening
+                [5] → [11] → [12]
+```
+
+---
+
+## 📈 Recommended Timeline
+
+```
+WEEK 1-2: Foundation                   
+├─ [1] STUN/TURN Failover  ████████░░ 80% effort
+├─ [2] Signaling Server    ██████████ 100% effort (blocking others)
+└─ Start [3] Room Lifecycle
+
+WEEK 3-4: Reliability                  
+├─ [3] Room Lifecycle      ███████░░░ 70% effort
+├─ [4] Error Handling      ██████░░░░ 60% effort
+├─ [5] Input Validation    ███░░░░░░░ 30% effort
+└─ Start [6] File Transfer
+
+WEEK 5-6: Robustness                   
+├─ [6] File Transfer SM    ███████░░░ 70% effort
+├─ [7] Monitoring          ██████░░░░ 60% effort
+└─ [8] Password Vault      ████████░░ 80% effort
+
+WEEK 7-8: Polish                       
+├─ [9] Mobile Testing      ██████░░░░ 60% effort
+├─ [10] Offline Resilience ██████░░░░ 60% effort
+├─ [11] Key Management     ████░░░░░░ 40% effort
+├─ [12] QR Code Security   ███░░░░░░░ 30% effort
+└─ [13] TypeScript Strict  ████░░░░░░ 40% effort
+```
+
+---
+
+## 🚨 Critical Path (Minimum Viable Production)
+
+**Must do before scaling to 1000+ concurrent users:**
+
+```
+Week 1-2:
+  1. [1] STUN/TURN Failover ........... 40% of users can't connect without this
+  2. [2] Signaling Server ............ Core P2P doesn't work without this
+  3. [3] Room Lifecycle .............. Resource leak & DoS vector
+
+Week 3-4:
+  4. [4] Error Handling .............. Silent failures in production
+  5. [5] Input Validation ............ Security vulnerability
+  6. [6] File Transfer State Machine .. Data corruption risk
+
+Week 5-6:
+  7. [7] Monitoring .................. Blind in production
+  8. [8] Password Vault .............. Core feature incomplete
+
+Estimated: 8-10 weeks to production-ready with full team
+```
+
+---
+
+## 🎓 Learning Path for New Team Members
+
+**1. Understand the Architecture (1-2 hours)**
+   - Read: Project Status Report
+   - Read: Architecture section of Error Check doc
+   - Diagram: Dependency graph (above)
+
+**2. WebRTC Fundamentals (2-3 hours)**
+   - Watch: WebRTC connection flow
+   - Understand: STUN, TURN, ICE candidates
+   - Understand: SDP offer/answer exchange
+
+**3. Current Implementation (2-3 hours)**
+   - Review: src/lib/p2pEngine.ts
+   - Review: src/components/HeroSection.tsx
+   - Review: Existing test files
+
+**4. Pick an Issue (Work with Lead Developer)**
+   - Start with Issue [5] (Input Validation) — Easiest
+   - Then Issue [4] (Error Handling) — Good learning
+   - Then Issue [1] (STUN/TURN) — Confidence builder
+
+**5. Contribute Prompts (2-3 hours)**
+   - Use Implementation_Prompts_Ready_to_Use.md
+   - Run prompt through Claude/ChatGPT
+   - Adapt generated code to team patterns
+
+---
+
+## 📋 Tracking Template
+
+Use this to track implementation progress:
+
+```markdown
+# FLUX_P2P Implementation Tracker
+
+## Week 1-2 Progress
+- [x] Issue [1] STUN/TURN Failover
+  - Status: In Progress (60%)
+  - Owner: @engineer_name
+  - PR: #123
+  - Tests: 45/50 passing
+  
+- [ ] Issue [2] Signaling Server
+  - Status: Not Started
+  - Owner: 
+  - Blocked By: [1]
+  
+## Week 3-4 Progress
+- [ ] Issue [3] Room Lifecycle
+- [ ] Issue [4] Error Handling
+- [ ] Issue [5] Input Validation
+- [ ] Issue [6] File Transfer SM
+
+## Metrics
+- Production issues reported: 0
+- Error rate: [will track after [7]]
+- File transfer success rate: [will track after [6]]
+- User complaints: [none yet - early users]
+```
+
+---
+
+## 🔍 How to Use These Documents
+
+### Document 1: Error_Check_and_Improvement_Plan.md
+**Use this for:**
+- Understanding what's wrong and why
+- Executive summary for stakeholders
+- Design review discussions
+- Risk assessment
+- Prioritization debates
+
+**Who reads this:**
+- Project lead
+- Tech lead
+- Architects
+- Product manager
+
+---
+
+### Document 2: Implementation_Prompts_Ready_to_Use.md
+**Use this for:**
+- Daily development work
+- Asking AI assistants for code
+- Specification for new developers
+- Code review guidelines
+- Testing requirements
+
+**Who reads this:**
+- Frontend developers
+- Backend developers
+- DevOps engineers
+- QA engineers
+
+---
+
+### Document 3: Quick_Reference_Issue_Matrix.md
+**Use this for:**
+- Daily standup (what's blocked, what's next)
+- Sprint planning
+- Quick status checks
+- Teaching new team members
+- Prioritization questions
+
+**Who reads this:**
+- Everyone on team
+- New team members
+- Stakeholders (simplified version)
+
+---
+
+## 🏗️ Implementation Teams (Suggested)
+
+### Team 1: WebRTC Infrastructure (2 people)
+- **Lead:** Senior full-stack engineer
+- **Focus:** [1], [2], [3]
+- **Timeline:** Weeks 1-4
+- **Deliverables:** 
+  - STUN/TURN failover system
+  - Signaling server
+  - Room lifecycle management
+  - Integration tests
+
+### Team 2: Reliability & Security (2 people)
+- **Lead:** Backend engineer
+- **Focus:** [4], [5], [6], [7]
+- **Timeline:** Weeks 3-6
+- **Deliverables:**
+  - Error handling framework
+  - Input validation layer
+  - File transfer state machine
+  - Monitoring dashboard
+
+### Team 3: Features & Polish (1-2 people)
+- **Lead:** Full-stack engineer
+- **Focus:** [8], [9], [10], [11], [12], [13]
+- **Timeline:** Weeks 5-8
+- **Deliverables:**
+  - Password vault system
+  - Mobile optimization
+  - Offline support
+  - Security enhancements
+  - TypeScript cleanup
+
+---
+
+## ⚠️ Red Flags During Implementation
+
+### Stop and Review If:
+
+1. **STUN/TURN [1] taking > 1 week**
+   - Check: Are you over-engineering?
+   - Solution: MVP first (2 STUN + 1 TURN), add more later
+
+2. **Signaling Server [2] not connecting to P2P Engine [1]**
+   - Problem: Likely integration issue
+   - Solution: Daily sync between teams, shared test harness
+
+3. **Room Lifecycle [3] deleting active rooms**
+   - Problem: Timeout logic too aggressive
+   - Solution: Increase inactivity threshold, add warnings
+
+4. **Error Handling [4] silencing real errors**
+   - Problem: Over-catching exceptions
+   - Solution: Log all errors, only silence user-facing messages
+
+5. **Validation [5] rejecting valid input**
+   - Problem: Regex too strict or data format assumption wrong
+   - Solution: Test with real user data, add debugging output
+
+6. **File Transfers [6] failing on 100 MB files**
+   - Problem: Chunk size or memory issue
+   - Solution: Reduce chunk size, test with larger increments
+
+---
+
+## 📞 Support & Questions
+
+### Questions About Issues? 
+→ Refer to: Error_Check_and_Improvement_Plan.md (respective issue section)
+
+### How to Implement Issue X?
+→ Refer to: Implementation_Prompts_Ready_to_Use.md (PROMPT X.Y)
+
+### Is Issue Y blocking my work?
+→ Refer to: Dependency Graph (above)
+
+### How much time does Issue Z take?
+→ Refer to: Timeline & Priority Matrix (above)
+
+### What should I work on tomorrow?
+→ Refer to: Critical Path (above)
+
+---
+
+## 📊 Success Metrics (Post-Implementation)
+
+After completing all issues, you should see:
+
+| Metric | Before | After | Target |
+|--------|--------|-------|--------|
+| P2P Connection Success Rate | 60-70% | 99%+ | ✓ |
+| Time to Successful Connection | 5-10s | <2s | ✓ |
+| File Transfer Success Rate | Unknown | 99%+ | ✓ |
+| Error Visibility | None | Full | ✓ |
+| Production Downtime | TBD | <99.9% uptime | ✓ |
+| Security Issues Found | 0 (unaudited) | Issues fixed | ✓ |
+| Mobile Usability | Untested | Works 95% | ✓ |
+| TypeScript Type Safety | Loose | Strict | ✓ |
+
+---
+
+**Last Updated:** July 28, 2026  
+**Status:** Ready for Implementation  
+**Next Review:** After SPRINT 1 completion (Week 2)

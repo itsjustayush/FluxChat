@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account details",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "Display name" },
+        "createdAt": { "type": "number", "description": "Timestamp" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Room": {
+      "title": "Ephemeral Room",
+      "description": "Active P2P connection room",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string", "description": "Room OTP identifier" },
+        "hostUid": { "type": "string", "description": "Host User UID" },
+        "createdAt": { "type": "number", "description": "Timestamp" }
+      },
+      "required": ["roomId", "hostUid"]
+    },
+    "BundleItem": {
+      "title": "Shared Asset",
+      "description": "Shared file metadata in room",
+      "type": "object",
+      "properties": {
+        "fileId": { "type": "string" },
+        "roomId": { "type": "string" },
+        "uploaderUid": { "type": "string" },
+        "name": { "type": "string" },
+        "size": { "type": "number" },
+        "type": { "type": "string" },
+        "fileTypeLabel": { "type": "string" },
+        "sha256": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "carbonFootprintGrams": { "type": "number" }
+      },
+      "required": ["fileId", "roomId", "uploaderUid", "name", "size"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profile collection"
+    },
+    "/rooms/{roomId}": {
+      "schema": { "$ref": "#/entities/Room" },
+      "description": "Ephemeral P2P room session collection"
+    },
+    "/rooms/{roomId}/bundleItems/{itemId}": {
+      "schema": { "$ref": "#/entities/BundleItem" },
+      "description": "Files shared in a specific room"
+    }
+  }
+}

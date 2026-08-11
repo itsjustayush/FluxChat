@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // User profiles
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create, update: if isOwner(userId);
+      allow delete: if false;
+    }
+
+    // P2P Ephemeral Rooms (Signaling & Presence)
+    match /rooms/{roomId} {
+      allow read, write: if true;
+
+      match /peers/{peerId} {
+        allow read, write: if true;
+      }
+
+      match /signals/{signalId} {
+        allow read, write: if true;
+      }
+
+      match /bundleItems/{itemId} {
+        allow read, write: if true;
+      }
+    }
+  }
+}

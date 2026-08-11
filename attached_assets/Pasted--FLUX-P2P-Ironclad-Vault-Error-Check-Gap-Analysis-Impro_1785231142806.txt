@@ -1,0 +1,859 @@
+# FLUX_P2P / Ironclad Vault: Error Check, Gap Analysis & Improvement Prompts
+
+**Date:** July 28, 2026  
+**Project:** FLUX_P2P - High-Performance Zero-Knowledge P2P Vault  
+**Status:** Production-Ready with Critical Gaps Identified
+
+---
+
+## EXECUTIVE SUMMARY
+
+Your project demonstrates **solid architectural foundation** with WebRTC P2P and AES-256-GCM encryption. However, **7 critical gaps and 12 optimization areas** require attention before production deployment at scale.
+
+**Critical Issues:** 3  
+**High Priority:** 4  
+**Medium Priority:** 8  
+**Nice-to-Have:** 6
+
+---
+
+## 🚨 CRITICAL ISSUES (Must Fix Before Scale)
+
+### ISSUE #1: Single STUN Server with No TURN Fallback
+**Severity:** CRITICAL  
+**Impact:** 30-40% of users behind strict firewalls unable to connect
+
+**Current State:**
+```javascript
+stun:stun.l.google.com:19302  // Single point of failure
+```
+
+**Problem:**
+- No TURN relay for symmetric NAT/firewall scenarios
+- Google STUN server is unreliable in corporate environments
+- No fallback if primary STUN fails
+- No latency monitoring for STUN server health
+
+**PROMPT FOR FIX:**
+```
+Create a production-grade STUN/TURN configuration module:
+
+1. Implement COTURN server failover with 3 geographically distributed TURN servers
+2. Design a STUN server health-check system that:
+   - Pings STUN servers every 30 seconds
+   - Automatically rotates to backup if latency > 500ms or failure rate > 5%
+   - Logs server performance metrics
+3. Add configuration for these backup STUN servers:
+   - stun.stunprotocol.org:3478
+   - stun1.l.google.com:19302
+   - stun.services.mozilla.com:3478
+4. Create RTCConfiguration factory that dynamically builds ICE candidates list
+5. Add WebRTC stats monitoring to track ICE candidate types used
+6. Document fallback behavior in technical runbook
+
+Deliverable: src/lib/iceServerManager.ts with:
+- getOptimalICEServers() function
+- iceServerHealthMonitor() background task
+- metrics collection for analytics
+```
+
+---
+
+### ISSUE #2: Missing Signal Server Architecture
+**Severity:** CRITICAL  
+**Impact:** Cannot establish P2P connections at scale
+
+**Problem:**
+- SDP offer/answer exchange mechanism not documented
+- No mention of signaling server for initial peer discovery
+- Unclear how Room OTP translates to actual peer connections
+- No session description protocol handling details
+
+**Current Assumption (Dangerous):**
+The document vaguely implies browser-only solution, but WebRTC requires a signaling layer to exchange SDP offers/answers before direct P2P channels open.
+
+**PROMPT FOR SIGNALING LAYER:**
+```
+Design and implement a lightweight signaling server:
+
+1. Architecture Decision:
+   - Option A: WebSocket relay (Node.js + Socket.io)
+   - Option B: Firebase Realtime Database (serverless)
+   - Option C: Hybrid (WebSocket primary, Firebase fallback)
+   
+   Recommend: Option C for resilience
+   
+2. Signal Server Responsibilities:
+   - Maintain room registry (room_id → [peer_ids])
+   - Relay SDP offers/answers between peers
+   - Handle ICE candidate trickling
+   - Track peer connection state
+   - Clean up stale rooms after 30 min inactivity
+
+3. Client-Side Integration:
+   - Create SignalClient class that:
+     * Establishes persistent WebSocket to signal server
+     * Emits room-join with OTP
+     * Listens for peer-discovered events
+     * Relays SDP offers/answers to WebRTCPeerEngine
+   
+4. Security:
+   - Sign all signals with HMAC-SHA256 using room secret
+   - Rate limit signal operations per peer (10 req/sec max)
+   - Validate SDP format before relaying (prevent injection)
+
+5. Testing:
+   - Write load test: 100 rooms × 10 peers = 1000 connections
+   - Measure signal latency p50/p95/p99
+   - Test failover between WebSocket and Firebase
+
+Deliverable: 
+- src/lib/signalClient.ts
+- /signals-server (new backend folder)
+- test/signaling.load.test.ts
+```
+
+---
+
+### ISSUE #3: Undefined Room Lifecycle & Cleanup
+**Severity:** CRITICAL  
+**Impact:** Resource leak, DoS vulnerability, unpredictable behavior
+
+**Problem:**
+- No mention of room timeout/expiration
+- No cleanup of stale peer connections
+- Unclear if rooms are ephemeral or persistent
+- No mention of max concurrent peers per room
+- "Ephemeral" is claimed but mechanism undefined
+
+**PROMPT FOR ROOM LIFECYCLE MANAGEMENT:**
+```
+Implement complete room lifecycle with automatic cleanup:
+
+1. Room State Machine:
+   States: PENDING → ACTIVE → EXPIRING → CLOSED
+   
+   - PENDING (0-2 min): Room code generated, awaiting first peer join
+   - ACTIVE (max 4 hours): Multiple peers connected, file transfers allowed
+   - EXPIRING (30 sec warning): No data activity for 30 min, inform peers
+   - CLOSED: All peers disconnected OR timeout reached
+
+2. Automatic Cleanup Rules:
+   - Room auto-deletes if:
+     * 0 peers for > 5 minutes
+     * Any single room active for > 4 hours (hard limit)
+     * Total room age > 24 hours (safety limit)
+   - Warn connected peers 30 seconds before deletion
+   - Send leave notification to all peers
+
+3. Per-Room Constraints:
+   - Max 50 concurrent peers (raise error if exceeded)
+   - Max 5 GB total data transfer per room
+   - Max 10 concurrent file uploads per room
+
+4. Room State Tracking:
+   Create RoomManager class:
+   ```typescript
+   class RoomManager {
+     createRoom(options: RoomOptions): Room
+     joinRoom(roomId: string, peerId: string): Room
+     leaveRoom(roomId: string, peerId: string): void
+     getRoomStats(roomId: string): RoomStats
+     cleanupExpiredRooms(): void  // Run every 60 seconds
+   }
+   ```
+
+5. Backend Tracking:
+   Store in Firestore:
+   - rooms/{roomId}/{metadata, createdAt, lastActivityAt, peers}
+   - Implement TTL document deletion policy
+
+6. Frontend Cleanup:
+   - On window beforeunload, call leaveRoom()
+   - Monitor connection state, auto-cleanup if DISCONNECTED > 2 min
+   - Display countdown timer when room expiring
+
+Deliverable:
+- src/lib/roomManager.ts
+- src/lib/roomStateChart.ts (state machine)
+- src/hooks/useRoomLifecycle.ts
+- Firestore rules for TTL
+```
+
+---
+
+## ⚠️ HIGH PRIORITY ISSUES (Next Sprint)
+
+### ISSUE #4: No Input Validation or Rate Limiting
+**Severity:** HIGH  
+**Impact:** Security vulnerability to injection, DoS
+
+**Problem:**
+- Room OTP never validated format (should be alphanumeric only)
+- QR code parameters (?room=, ?action=) not sanitized
+- No rate limiting on room join attempts
+- No CSRF token on deep links
+
+**PROMPT FOR SECURITY HARDENING:**
+```
+Implement comprehensive input validation and rate limiting:
+
+1. OTP Validation Layer:
+   - Room OTP regex: ^[A-Z0-9]{6}$ (exactly 6 alphanumeric)
+   - Validate on client (UX) and server (security)
+   - Reject invalid OTP with specific error (not generic)
+   - Log failed attempts for security monitoring
+
+2. URL Parameter Sanitization:
+   ```typescript
+   function validateRoomParams(url: URL) {
+     const room = url.searchParams.get('room')
+     const action = url.searchParams.get('action')
+     
+     if (room && !/^[A-Z0-9]{6}$/.test(room)) throw InvalidRoomError
+     if (action && !['download_bundle'].includes(action)) throw InvalidActionError
+     
+     // Prevent open redirect
+     if (url.origin !== window.location.origin) throw XSSError
+   }
+   ```
+
+3. Rate Limiting (Per Browser):
+   - Room join: 10 attempts per 60 seconds per IP
+   - File upload: 100 MB per minute per peer
+   - Download: 500 MB per minute per peer
+   - Implement leaky bucket algorithm
+
+4. Implement CSRF Protection:
+   - Generate state token for QR-initiated joins
+   - Store nonce in sessionStorage
+   - Validate on room join callback
+
+5. Content Security Policy (CSP):
+   - Add CSP headers (no inline scripts)
+   - Restrict video source to same-origin only
+   - Disable unsafe-eval
+
+Deliverable:
+- src/lib/validators.ts
+- src/lib/rateLimiter.ts
+- middleware/security.ts
+- CSP configuration
+```
+
+---
+
+### ISSUE #5: Inadequate Error Handling & Connection Fallback
+**Severity:** HIGH  
+**Impact:** Silent failures, poor user experience, no debugging info
+
+**Problem:**
+- No try-catch around WebRTC connection establishment
+- No error boundary for React components
+- No fallback if encryption fails
+- Error messages not user-friendly
+- No retry logic for failed peer connections
+
+**PROMPT FOR ERROR HANDLING:**
+```
+Create comprehensive error handling and recovery system:
+
+1. WebRTC Connection Error Handler:
+   ```typescript
+   peerConnection.addEventListener('connectionstatechange', (event) => {
+     switch(peerConnection.connectionState) {
+       case 'connected': handleConnected()
+       case 'disconnected': handleDisconnect(autoRetry=true)
+       case 'failed': handleConnectionFailed(retryCount)
+       case 'closed': handleClosed()
+     }
+   })
+   ```
+   
+   On failed connection:
+   - Attempt 3 retries with exponential backoff (1s, 2s, 4s)
+   - Try alternate STUN/TURN servers
+   - Notify user with estimated recovery time
+   - Log error with session ID for debugging
+
+2. Encryption Error Handler:
+   - Catch crypto.subtle.encrypt failures
+   - Attempt retry with new IV
+   - If persistent, offer alternative (plain transfer with warning)
+   - Log error signature for analysis
+
+3. React Error Boundary:
+   ```typescript
+   class ErrorBoundary extends React.Component {
+     componentDidCatch(error, errorInfo) {
+       // Log to Sentry/LogRocket
+       // Show user-friendly error UI
+       // Offer recovery options
+     }
+   }
+   ```
+
+4. Error Classification & User Messages:
+   - NETWORK_ERROR: "Lost connection. Reconnecting..."
+   - CRYPTO_ERROR: "Encryption issue. Please refresh."
+   - PERMISSION_ERROR: "Camera/microphone permission denied"
+   - INVALID_OTP: "Room code not found or expired"
+   - TIMEOUT: "Connection took too long. Please try again."
+
+5. Recovery Strategies:
+   - Auto-reconnect with exponential backoff
+   - Offer manual room re-join
+   - Cache last successful state
+   - Implement checkpoint system for file transfers
+
+Deliverable:
+- src/components/ErrorBoundary.tsx
+- src/lib/errorHandler.ts
+- src/hooks/useConnectionRecovery.ts
+- Error logging integration
+```
+
+---
+
+### ISSUE #6: Missing File Transfer State Machine
+**Severity:** HIGH  
+**Impact:** Corrupted files, incomplete transfers, data loss
+
+**Problem:**
+- File chunking strategy not defined (size? retry logic?)
+- No checksum verification mentioned
+- No resume capability for interrupted transfers
+- No progress tracking detailed implementation
+- Chunk ordering/reassembly logic not specified
+
+**PROMPT FOR ROBUST FILE TRANSFER:**
+```
+Design and implement production-grade file transfer system:
+
+1. Chunking Strategy:
+   - Chunk size: 64 KB (balances latency and overhead)
+   - Max concurrent chunks: 4 per file
+   - Sequence number + total chunks header
+   
+   Format:
+   ```
+   [magic:4][version:1][fileId:16][chunkSeq:4][totalChunks:4][payload:65536][crc32:4]
+   ```
+
+2. File Transfer State Machine:
+   States: QUEUED → UPLOADING → UPLOADED → VERIFYING → COMPLETE
+   
+   Transitions:
+   - On chunk error: backoff 1s, retry up to 3x
+   - If > 30s without activity: pause transfer, prompt user
+   - On completion: verify CRC32, move to VERIFYING
+   - Store partial transfers in IndexedDB for resume
+
+3. Progress Tracking:
+   ```typescript
+   interface TransferProgress {
+     fileId: string
+     bytesTransferred: number
+     totalBytes: number
+     percentComplete: number
+     estimatedTimeRemaining: number
+     chunksReceived: Set<number>  // For resume
+     state: TransferState
+   }
+   ```
+
+4. Checksum Verification:
+   - Client generates SHA-256 hash before transfer
+   - Send hash in file metadata
+   - Receiver verifies after reassembly
+   - Re-request individual chunks if hash mismatch
+
+5. Resume Capability:
+   - On disconnect: store chunks received in IndexedDB
+   - On reconnect: query peer for missing chunks
+   - Resume from last complete chunk
+   - Timeout resume after 24 hours
+
+6. Bandwidth Awareness:
+   - Monitor RTT and packet loss
+   - Auto-adjust chunk size if loss > 5%
+   - Implement adaptive bitrate (start 64KB, adjust ±50%)
+
+Deliverable:
+- src/lib/fileTransferEngine.ts
+- src/lib/chunkAssembler.ts
+- src/hooks/useFileTransfer.ts
+- tests/fileTransfer.test.ts
+```
+
+---
+
+### ISSUE #7: No Performance Monitoring or Analytics
+**Severity:** HIGH  
+**Impact:** Can't diagnose production issues, no usage insights
+
+**Problem:**
+- No metrics collection mentioned
+- "Simulated latency" in peer list (not real network data)
+- No WebRTC statistics gathering
+- No error rate tracking
+- No user journey analytics
+
+**PROMPT FOR MONITORING & OBSERVABILITY:**
+```
+Implement comprehensive monitoring and analytics:
+
+1. WebRTC Statistics Collection:
+   ```typescript
+   async function collectWebRTCStats(peerConnection) {
+     const stats = await peerConnection.getStats()
+     stats.forEach(report => {
+       if (report.type === 'inbound-rtp') {
+         emit('metric:bytesReceived', {
+           timestamp: Date.now(),
+           bytes: report.bytesReceived,
+           packetsLost: report.packetsLost
+         })
+       }
+     })
+   }
+   ```
+   
+   Metrics to track:
+   - Actual RTT (not simulated)
+   - Packet loss percentage
+   - Available outgoing bitrate
+   - Audio/video frame rate
+   - Connection establishment time
+   - Data channel throughput
+
+2. Application Metrics:
+   - Room creation time
+   - Time to first peer connection
+   - File transfer success rate
+   - Encryption/decryption latency
+   - Error rates by type
+   - QR code scan to connection time
+
+3. Analytics Events:
+   ```typescript
+   track('room:created', { otp, timestamp })
+   track('peer:connected', { peerId, iceCandidate, rtt })
+   track('file:upload_started', { fileId, size, fileType })
+   track('file:upload_completed', { fileId, durationMs, avgBitrate })
+   track('error:connection_failed', { reason, retryAttempt })
+   ```
+
+4. Real-time Dashboard:
+   - Active rooms count
+   - Connected peers graph
+   - File transfer success rate (24h rolling)
+   - Error rate by type
+   - Geographic distribution (if applicable)
+
+5. Logging Strategy:
+   - ERROR: connection failures, crypto errors, data loss
+   - WARN: high latency (>500ms), packet loss >5%, retries
+   - INFO: room lifecycle, peer join/leave, file transfer milestones
+   - DEBUG: WebRTC state changes, chunk transfers, metrics samples
+   
+   Send ERROR/WARN to Sentry for alerting
+   Send metrics to CloudWatch/Datadog every 60 seconds
+
+6. Implementation:
+   - Use LogRocket for session replay on errors
+   - Sentry for error tracking + source maps
+   - Custom analytics to backend service
+   - LocalStorage cache for metrics if offline
+
+Deliverable:
+- src/lib/telemetry.ts
+- src/lib/metricsCollector.ts
+- src/hooks/useWebRTCStats.ts
+- backend/analytics/router.ts
+- Dashboards (Grafana or equivalent)
+```
+
+---
+
+## 📋 MEDIUM PRIORITY ISSUES
+
+### ISSUE #8: Password Vault Implementation Incomplete
+**Problem:** Features described but no technical details (encryption strategy, storage, sync).
+
+**PROMPT:**
+```
+Complete password vault subsystem design:
+
+Requirements:
+1. Local Storage:
+   - IndexedDB for encrypted password storage
+   - Master password (Argon2 key derivation)
+   - AES-256-GCM per-secret encryption
+   - No plaintext ever leaves browser
+
+2. Secret Metadata:
+   - created_at, last_modified_at, accessed_at
+   - Tags/categories for organization
+   - Custom fields support
+
+3. Sync (Future):
+   - Design: Firestore + client-side encryption
+   - Server stores encrypted blobs, never sees plaintext
+   - Conflict resolution strategy (last-write-wins or CRDT)
+   - Multi-device key derivation
+
+4. Security:
+   - Master password timeout (15 min idle)
+   - Logout clears sensitive memory
+   - No password copy to clipboard (drag+drop only)
+   - Audit log of access attempts
+
+Deliverable: src/lib/vault/\*, design document
+```
+
+---
+
+### ISSUE #9: Missing Mobile Responsiveness Validation
+**Problem:** "Responsive" claimed but no breakpoint specifications or testing.
+
+**PROMPT:**
+```
+Validate and document mobile responsiveness:
+
+1. Test breakpoints:
+   - Mobile: 320px, 375px, 425px
+   - Tablet: 768px, 1024px
+   - Desktop: 1440px, 1920px
+
+2. Test devices:
+   - iOS Safari (latest 2 versions)
+   - Android Chrome (latest 2 versions)
+   - Check for WebRTC support on mobile
+
+3. Touch interactions:
+   - Increase tap targets to 44px minimum
+   - Test swipe/drag for Framer Motion sheet
+   - Test QR code camera access
+
+4. Performance on mobile:
+   - Measure initial load time on 4G throttle
+   - Memory usage with concurrent transfers
+   - Battery impact during P2P transfers
+
+Deliverable: Responsive design guide, test matrix
+```
+
+---
+
+### ISSUE #10: No Offline Resilience Strategy
+**Problem:** Assumed always-online; no handling for intermittent connectivity.
+
+**PROMPT:**
+```
+Design offline-first architecture:
+
+1. Detection:
+   - Monitor navigator.onLine
+   - Implement manual connection check (HTTP ping)
+   - Detect local network vs internet connectivity
+
+2. Local State:
+   - Queue file transfers if offline
+   - Save room join attempts
+   - Cache vault data locally
+
+3. Sync on Reconnect:
+   - Resume interrupted transfers
+   - Retry failed operations
+   - Merge state changes
+
+4. UI Feedback:
+   - Show offline indicator
+   - Disable room creation (requires signaling)
+   - Queue transfers with "waiting for network" status
+
+Deliverable: src/lib/offlineManager.ts, useOnlineStatus hook
+```
+
+---
+
+### ISSUE #11: Crypto Key Management & Rotation
+**Problem:** How are keys stored? No mention of key rotation, key derivation function details.
+
+**PROMPT:**
+```
+Document and implement key management:
+
+1. Room Encryption Key:
+   - Generated per room or per file?
+   - How shared between peers? (via signal server?)
+   - Storage: memory only? IndexedDB?
+   - Lifetime: room lifetime or 30 min auto-rotation?
+
+2. Master Vault Key:
+   - Derive from password using Argon2id (not PBKDF2)
+   - Parameters: iterations=2, memory=19, parallelism=1 (OWASP 2021)
+   - Salt: 16 bytes, stored locally
+
+3. Key Rotation Strategy:
+   - Auto-rotate file encryption keys every 4 hours
+   - Re-encrypt old files on background
+   - Handle key versioning
+
+4. Emergency Key Recovery:
+   - Generate recovery codes on first login
+   - Allow password reset via recovery codes
+   - Store recovery codes encrypted separately
+
+Deliverable: src/lib/crypto/keyManager.ts, design doc
+```
+
+---
+
+### ISSUE #12: QR Code Security & Expiration
+**Problem:** QR codes generated but no expiration, no anti-tampering.
+
+**PROMPT:**
+```
+Harden QR code security:
+
+1. QR Code Content:
+   - Include timestamp (valid for 10 minutes only)
+   - Include room secret in signed JWT
+   - Format: https://app.flux/join?token=JWT_HERE
+
+2. Token Validation:
+   - Sign with HS256 (server secret)
+   - Include room_id, exp, nonce in payload
+   - Verify signature and expiration on join
+
+3. Brute Force Protection:
+   - Rate limit QR scans per room (10/minute)
+   - Ban IP after 20 failed attempts
+   - Notify room creator of suspicious activity
+
+4. Visual Security:
+   - Add room name overlay on QR code
+   - Display expiration time below QR
+   - Show "Expires in 10 minutes" warning
+
+Deliverable: src/components/QRCodeModal.tsx (updated), tokenizer.ts
+```
+
+---
+
+### ISSUE #13: TypeScript Strict Mode & Type Safety
+**Problem:** Likely using loose TypeScript settings; no mention of strict null checks.
+
+**PROMPT:**
+```
+Enforce strict TypeScript configuration:
+
+1. Update tsconfig.json:
+   ```json
+   {
+     "compilerOptions": {
+       "strict": true,
+       "noImplicitAny": true,
+       "noImplicitThis": true,
+       "strictNullChecks": true,
+       "strictFunctionTypes": true,
+       "strictPropertyInitialization": true,
+       "noImplicitReturns": true
+     }
+   }
+   ```
+
+2. Fix existing code:
+   - Add return types to all functions
+   - Type event handlers explicitly
+   - Eliminate 'any' types (use unknown if needed)
+   - Add null coalescing for optional values
+
+3. Create type definitions:
+   - src/types/room.ts
+   - src/types/peer.ts
+   - src/types/transfer.ts
+   - src/types/vault.ts
+
+Deliverable: Updated tsconfig.json, type migration guide
+```
+
+---
+
+### ISSUE #14: Testing Strategy & Coverage
+**Problem:** No mention of unit/integration/e2e tests.
+
+**PROMPT:**
+```
+Implement comprehensive test suite:
+
+1. Unit Tests (Jest):
+   - OTP generator: 1000 rooms have unique OTPs
+   - IV generation: 1000 samples, no collisions
+   - Chunk assembler: test ordering, missing chunks
+   - Rate limiter: test bucket logic
+
+   Target: 80% line coverage
+
+2. Integration Tests:
+   - P2P connection establishment
+   - File transfer (10MB)
+   - Encryption/decryption roundtrip
+   - Room cleanup
+
+3. E2E Tests (Playwright):
+   - Join room via QR code
+   - Upload file to peer
+   - Download file from peer
+   - Verify file integrity
+
+4. Load Tests (k6):
+   - 100 concurrent rooms
+   - 1000 simultaneous connections
+   - Measure signal server latency
+   - Identify bottlenecks
+
+Deliverable: test/, .github/workflows/ci.yml
+```
+
+---
+
+## 🎯 NICE-TO-HAVE IMPROVEMENTS
+
+### ENHANCEMENT #1: Dark Mode Toggle & Theme Customization
+**Prompt:**
+```
+Add theme system with persistence:
+- Light/dark/auto detection
+- Custom color picker for accent color
+- Font size adjustment
+- High contrast mode for accessibility
+- Persist preference to localStorage
+
+Deliverable: src/lib/themeProvider.tsx, useTheme hook
+```
+
+### ENHANCEMENT #2: End-to-End Encryption for QR Code
+**Prompt:**
+```
+Make QR codes less information-leaking:
+- Encode only token, not room name
+- Implement session key exchange before sharing data
+- Display room name only after peer verifies identity
+
+Deliverable: src/lib/qrEncryption.ts
+```
+
+### ENHANCEMENT #3: Bandwidth Limiting UI Control
+**Prompt:**
+```
+Let users throttle upload/download speed:
+- UI slider: 1 Mbps to 100 Mbps
+- Save preference
+- Implement token bucket to enforce limit
+- Display actual vs requested speed
+
+Deliverable: src/components/BandwidthLimiter.tsx
+```
+
+### ENHANCEMENT #4: File Encryption at Rest
+**Prompt:**
+```
+When files downloaded, encrypt before saving:
+- Use same AES-256-GCM key as transfer
+- Store encryption key in sessionStorage
+- Generate .enc and .key file pair
+- Add decryption utility to decrypt later
+
+Deliverable: src/lib/fileEncryption.ts
+```
+
+### ENHANCEMENT #5: Peer Verification (TOFU Model)
+**Prompt:**
+```
+Implement Trust-On-First-Use peer identity:
+- Generate peer key pair (Ed25519) on first use
+- Display peer fingerprint (first 8 chars of key hash)
+- User manually verifies via voice/video call
+- Cache verified peers, warn if key changes
+
+Deliverable: src/lib/peerVerification.ts, VerificationUI
+```
+
+### ENHANCEMENT #6: Audit Log & Activity History
+**Prompt:**
+```
+Track all user actions with immutable log:
+- Who created room, when
+- Which peers joined/left, when
+- File upload/download events
+- Vault access history
+- Export audit log as CSV
+
+Deliverable: src/lib/auditLog.ts, AuditLogViewer component
+```
+
+---
+
+## 🔍 TESTING CHECKLIST
+
+- [ ] Deploy to staging with production-like load
+- [ ] Test with real WebRTC stats, not simulated
+- [ ] Verify STUN failover works
+- [ ] Test connection drop + reconnect flow
+- [ ] Test file transfer with 100 MB file
+- [ ] Test encryption/decryption with special characters
+- [ ] Test QR code generation on various devices
+- [ ] Test room cleanup after timeout
+- [ ] Load test with 50 concurrent rooms
+- [ ] Security audit: OWASP Top 10
+- [ ] Penetration test for input validation
+
+---
+
+## 📅 RECOMMENDED ROLLOUT TIMELINE
+
+**Week 1-2 (CRITICAL):**
+- Implement STUN/TURN failover (Issue #1)
+- Build signaling server (Issue #2)
+- Add error handling (Issue #5)
+
+**Week 3-4 (HIGH):**
+- Room lifecycle management (Issue #3)
+- Input validation + rate limiting (Issue #4)
+- File transfer state machine (Issue #6)
+
+**Week 5-6 (MEDIUM):**
+- Monitoring & analytics (Issue #7)
+- Password vault complete (Issue #8)
+- Mobile validation (Issue #9)
+
+**Week 7-8 (POLISH):**
+- TypeScript strict mode (Issue #13)
+- Test suite (Issue #14)
+- Nice-to-have enhancements
+
+---
+
+## 📊 SUMMARY TABLE
+
+| Issue | Category | Severity | Effort | Impact |
+|-------|----------|----------|--------|--------|
+| STUN/TURN Fallback | Networking | CRITICAL | High | 40% users blocked |
+| Signaling Server | Architecture | CRITICAL | High | Core functionality |
+| Room Lifecycle | Reliability | CRITICAL | Medium | Resource leak |
+| Input Validation | Security | HIGH | Low | Injection risk |
+| Error Handling | Reliability | HIGH | Medium | Silent failures |
+| File Transfer SM | Data Integrity | HIGH | Medium | Data corruption |
+| Monitoring | Operations | HIGH | Medium | Blind in production |
+| Vault System | Features | HIGH | High | Core feature |
+| Mobile Responsive | UX | MEDIUM | Medium | Market reach |
+| Offline Resilience | UX | MEDIUM | Medium | Edge cases |
+| Key Management | Security | MEDIUM | Medium | Long-term security |
+| QR Code Security | Security | MEDIUM | Low | Low-risk exposure |
+
+---
+
+**Next Step:** Pick 2-3 CRITICAL issues and create Jira tickets with attached prompts. Start with STUN/TURN and Signaling Server in parallel.

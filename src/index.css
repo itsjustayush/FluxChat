@@ -1,0 +1,87 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+:root {
+  --font-heading: 'Helvetica Now Display Bold', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --color-text: #192837;
+  --color-accent: #7342E2;
+  --color-login-bg: #F2F2EE;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-text);
+  margin: 0;
+  padding: 0;
+}
+
+@layer base {
+  h1, h2, h3, .font-heading {
+    font-family: var(--font-heading);
+  }
+
+  body {
+    font-family: var(--font-body);
+  }
+
+  code, .font-mono, .font-code {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Frosted Glass & Ambient Mesh Utilities */
+.mesh-bg {
+  background-color: #050508;
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(30, 58, 138, 0.25) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(88, 28, 135, 0.2) 0px, transparent 50%),
+    radial-gradient(at 50% 50%, rgba(15, 23, 42, 0.3) 0px, transparent 50%);
+}
+
+.brutal-grid {
+  background-size: 40px 40px;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 9999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(59, 130, 246, 0.5);
+  border-radius: 9999px;
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* Primary action button for modals */
+.frosted-button-primary {
+  background-color: #7342E2;
+  color: #fff;
+  border: none;
+  transition: background-color 0.2s, transform 0.1s;
+}
+.frosted-button-primary:hover {
+  background-color: rgba(115, 66, 226, 0.9);
+}
+.frosted-button-primary:active {
+  transform: scale(0.97);
+}
+
+
+

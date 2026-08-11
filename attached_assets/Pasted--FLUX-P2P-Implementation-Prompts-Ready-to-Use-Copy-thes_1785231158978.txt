@@ -1,0 +1,1388 @@
+# FLUX_P2P Implementation Prompts - Ready to Use
+
+**Copy these prompts directly into your AI assistant or team documentation**
+
+---
+
+## 🔴 SPRINT 1: CRITICAL INFRASTRUCTURE (Week 1-2)
+
+### PROMPT 1.1: Build STUN/TURN Failover Manager
+
+**For Claude / ChatGPT / Copilot:**
+
+```
+You are a WebRTC infrastructure engineer. Create a production-ready STUN/TURN 
+server manager for a React + TypeScript P2P application.
+
+REQUIREMENTS:
+1. Multi-Server Support:
+   - Primary: stun:stun.l.google.com:19302
+   - Secondary: stun:stun1.l.google.com:19302, stun:stun.stunprotocol.org:3478
+   - TURN: Implement 3 geographically distributed TURN servers (use Coturn format)
+   - All servers configurable via environment variables
+
+2. Health Monitoring:
+   - Health check every 30 seconds
+   - Measure latency to each STUN server
+   - Track success rate (passed / total ping attempts)
+   - Auto-failover if: latency > 500ms OR success rate < 95%
+
+3. Dynamic ICE Configuration:
+   - Export function: getOptimalICEServers() → RTCConfiguration
+   - Rank servers by current health
+   - Return top 3 servers to RTCPeerConnection
+   - Update rankings every 30 seconds
+
+4. Metrics & Logging:
+   - Log all failover events (timestamp, from server, to server, reason)
+   - Collect metrics: latency, success rate, failover count
+   - Expose metrics via getServerMetrics() function
+
+5. Code Structure:
+   - File: src/lib/iceServerManager.ts
+   - Export class: ICEServerManager
+   - Methods:
+     * constructor(config: ICEConfig)
+     * startHealthChecks()
+     * stopHealthChecks()
+     * getOptimalICEServers(): RTCConfiguration
+     * getServerMetrics(): HealthMetrics[]
+     * onFailover: (event: FailoverEvent) => void callback
+
+6. Error Handling:
+   - Gracefully handle network timeout during health checks
+   - Fallback to backup server list if all checks fail
+   - Emit 'critical_connectivity_failure' if all servers down
+
+7. Testing:
+   - Mock STUN servers with simulated latency
+   - Test failover with network delay injection
+   - Verify ICE configuration returned correctly
+
+DELIVERABLE: Fully functional TypeScript file with JSDoc comments, 
+ready to integrate with WebRTCPeerEngine. Include unit test skeleton.
+
+CONSTRAINTS:
+- Use native WebRTC APIs only (no external libraries)
+- No console.log (use proper logging)
+- Handle browser compatibility (consider older Safari versions)
+- Memory efficient (no polling delays causing memory leaks)
+```
+
+**Your Task:** Run this prompt with your preferred AI assistant, or implement directly.
+
+---
+
+### PROMPT 1.2: Implement WebSocket Signaling Server
+
+**For Backend Developer / Full-Stack:**
+
+```
+Design and implement a lightweight WebSocket signaling server for P2P room management.
+
+TECH STACK: Node.js + Express + ws (WebSocket library)
+
+REQUIREMENTS:
+
+1. Server Architecture:
+   - Listen on port 3001 (configurable)
+   - Use JSON-based message protocol
+   - Implement graceful shutdown (drain connections)
+   - Support both WebSocket and fallback HTTP long-polling
+
+2. Room Management:
+   - Store active rooms: Map<string, Room>
+   - Room structure:
+     {
+       id: string              // 6-char OTP
+       secret: string          // Random 32-byte hex string
+       peers: Map<string, Peer>
+       createdAt: timestamp
+       lastActivityAt: timestamp
+     }
+
+3. Peer Discovery Flow:
+   Step 1: Client sends {"action": "join_room", "room": "ABC123"}
+   Step 2: Server validates OTP in database
+   Step 3: Server sends existing peers to joining client
+   Step 4: Server broadcasts peer joined to all room members
+   Step 5: Clients exchange SDP offers/answers through server
+
+4. Message Types:
+   a) join_room
+      Request:  {"action": "join_room", "room": "ABC123", "peerId": "peer_xyz"}
+      Response: {"action": "room_joined", "peers": [...], "roomSecret": "..."}
+   
+   b) peer_joined
+      Broadcast: {"action": "peer_joined", "peerId": "new_peer", "timestamp": ...}
+   
+   c) sdp_offer
+      {"action": "relay_sdp", "type": "offer", "targetPeer": "...", "sdp": "..."}
+   
+   d) ice_candidate
+      {"action": "relay_ice", "targetPeer": "...", "candidate": {...}}
+   
+   e) leave_room
+      {"action": "leave_room", "room": "ABC123"}
+
+5. Security:
+   - Sign all messages with HMAC-SHA256(message, roomSecret)
+   - Verify signature before relaying
+   - Rate limit per IP: 10 messages/second max
+   - Reject messages from unknown peers
+   - Validate message format (JSON schema)
+
+6. Cleanup:
+   - Remove room after 4 hours of creation
+   - Remove room if last peer leaves + 5 min idle
+   - Log all cleanup events
+   - Send "room_expiring" warning 1 minute before cleanup
+
+7. Monitoring:
+   - Log connection/disconnection events
+   - Emit metrics: active_rooms, active_peers, messages_relayed/sec
+   - Expose /health endpoint returning JSON status
+
+8. Database Integration:
+   - Store room metadata in Firestore (or SQLite for local dev)
+   - Timestamp last activity
+   - Query rooms for expiration cleanup (cron job every 60 seconds)
+
+9. Error Scenarios:
+   - Handle peer reconnect within 30 seconds (same peerId)
+   - Handle abrupt disconnects (timeout = 60 seconds)
+   - Handle invalid JSON payloads (log + close connection)
+   - Handle room full (>50 peers) gracefully
+
+DELIVERABLE:
+- src/server/signalServer.ts with Signal class
+- src/server/routes/health.ts
+- Environment config (PORT, ROOM_TIMEOUT_MS, etc.)
+- Docker configuration for deployment
+- Load test script (k6 or autocannon)
+
+TEST SCENARIOS:
+- 100 clients join same room
+- Clients rapidly disconnect/reconnect
+- Network partition (30% message loss)
+- Latency injection (500ms RTT)
+
+CONSTRAINTS:
+- Single server deployment (no clustering for now)
+- Keep server stateless for future horizontal scaling
+- Use TypeScript throughout
+```
+
+---
+
+### PROMPT 1.3: Client-Side Signaling Integration
+
+**For Frontend Developer:**
+
+```
+Integrate WebSocket signaling into React app. Connects to signaling server
+to enable peer discovery and SDP exchange.
+
+REQUIREMENTS:
+
+1. SignalClient Class:
+   Location: src/lib/signalClient.ts
+   
+   Features:
+   - Establish WebSocket connection to signal server
+   - Automatic reconnect on disconnect (exponential backoff: 1s, 2s, 4s, 8s)
+   - Queue messages if offline (send when reconnected)
+   - Emit TypeScript events: onPeerJoined, onSDPOffer, onICECandidate
+   - Track connection state (connecting, connected, disconnected, error)
+
+2. Type Definitions:
+   ```typescript
+   interface SignalMessage {
+     action: 'join_room' | 'peer_joined' | 'sdp_offer' | 'ice_candidate' | 'leave_room'
+     room?: string
+     peerId?: string
+     targetPeer?: string
+     data?: any
+     signature?: string  // HMAC
+     timestamp: number
+   }
+   ```
+
+3. React Hook: useSignalClient
+   Location: src/hooks/useSignalClient.ts
+   
+   Usage:
+   ```typescript
+   const { connected, joinRoom, relaySDPOffer, relayICE, leaveRoom } 
+     = useSignalClient()
+   
+   useEffect(() => {
+     joinRoom('ABC123')
+   }, [])
+   ```
+   
+   Returns:
+   - connected: boolean
+   - joinRoom: (roomId: string) => Promise<void>
+   - relaySDPOffer: (targetPeer: string, offer: RTCSessionDescription) => void
+   - relayICE: (targetPeer: string, candidate: RTCIceCandidate) => void
+   - leaveRoom: () => void
+   - onPeerJoined: (callback: (peerId: string) => void) => void
+   - onSDPOffer: (callback: (from: string, offer: SDP) => void) => void
+
+4. Event Handling:
+   - When onPeerJoined fires: Create new RTCPeerConnection
+   - When onSDPOffer fires: Set remote description, create answer
+   - When onICECandidate fires: Add to peer connection
+   - On window close: Call leaveRoom()
+
+5. Error Handling:
+   - Retry join_room up to 3x on failure
+   - Show toast if connection lost
+   - Persist room ID in sessionStorage for reconnect
+   - Log all signal events for debugging
+
+6. Testing:
+   - Mock SignalServer with ws mock
+   - Test successful peer discovery
+   - Test reconnect logic
+   - Test message queuing offline
+
+DELIVERABLE:
+- src/lib/signalClient.ts (complete class)
+- src/hooks/useSignalClient.ts (React hook)
+- src/__tests__/signalClient.test.ts (jest tests)
+
+PERFORMANCE:
+- Connection establishment < 500ms
+- Message relay < 100ms (p95)
+- Memory usage stable during idle
+```
+
+---
+
+## 🟡 SPRINT 2: ERROR RESILIENCE & SECURITY (Week 3-4)
+
+### PROMPT 2.1: Comprehensive Error Handling & Recovery
+
+**For Full-Stack Developer:**
+
+```
+Implement enterprise-grade error handling system with automatic recovery.
+
+REQUIREMENTS:
+
+1. WebRTC Connection Error Handler:
+   File: src/lib/connectionErrorHandler.ts
+   
+   Handle these states:
+   a) 'failed': Attempt 3 retries with new ICE servers
+   b) 'disconnected': Wait 10 seconds, auto-reconnect if not manually closed
+   c) 'closed': Clean up resources, offer manual rejoin
+   
+   For each retry:
+   - Exponential backoff: 1s → 2s → 4s
+   - Cycle to next STUN server configuration
+   - Log attempt with session ID
+   - After 3 failures: Notify user, ask to rejoin room
+
+2. Crypto/Encryption Error Handler:
+   File: src/lib/cryptoErrorHandler.ts
+   
+   Catch failures from:
+   - crypto.subtle.encrypt()
+   - crypto.subtle.decrypt()
+   - IV generation (getRandomValues)
+   
+   Recovery:
+   - Log error details (not plaintext, just error code)
+   - Retry operation with fresh IV
+   - On 2nd failure: Ask user to refresh browser
+   - Fallback to unencrypted transfer with warning
+
+3. React Error Boundary:
+   File: src/components/ErrorBoundary.tsx
+   
+   Features:
+   - Catches React component errors
+   - Logs to Sentry with session context
+   - Displays friendly error UI (NOT tech details to user)
+   - Offers "Try Again" button
+   - Shows error ID for support reference
+   
+   Error Messages:
+   - "Something went wrong. Your connection is being restored."
+   - "File transfer failed safely. No data was lost."
+   - "Let's try that again." (with retry button)
+
+4. Error Classification System:
+   File: src/lib/errorClassifier.ts
+   
+   Map errors to user-friendly messages:
+   - NETWORK_ERROR → "Connection lost. Reconnecting..."
+   - CRYPTO_ERROR → "Encryption issue. Please refresh."
+   - TIMEOUT_ERROR → "Taking too long. Try again?"
+   - INVALID_OTP → "Room not found. Check the code."
+   - PERMISSION_ERROR → "Camera/mic permission denied"
+   - STORAGE_ERROR → "Out of space to save file"
+   - CORRUPTED_FILE → "File was damaged. Resend?"
+
+5. Global Error Handler:
+   File: src/lib/globalErrorHandler.ts
+   
+   Implementation:
+   ```typescript
+   window.addEventListener('error', handleGlobalError)
+   window.addEventListener('unhandledrejection', handlePromiseRejection)
+   
+   - Catch all unhandled errors
+   - Send to logging service with context
+   - Increment error counter for alerts
+   - Don't show generic JS errors to user
+   ```
+
+6. Logging with Context:
+   File: src/lib/logger.ts
+   
+   Every log includes:
+   - timestamp
+   - session_id
+   - user_id (if authenticated)
+   - room_id (if applicable)
+   - severity (error, warn, info)
+   - error_code (unique identifier)
+   - stack trace (errors only)
+   
+   Send to: Sentry (for errors), CloudWatch (for all logs)
+
+7. Recovery UI Components:
+   - src/components/ConnectionError.tsx
+   - src/components/FileTransferError.tsx
+   - src/components/EncryptionError.tsx
+   
+   Each shows:
+   - What happened (plain language)
+   - What's being done about it (auto-recovering, etc.)
+   - What user can do (retry, refresh, contact support)
+   - Error reference ID
+   - Countdown timer if auto-retrying
+
+8. Testing Error Scenarios:
+   Create test helpers:
+   - simulateNetworkFailure()
+   - simulateCryptoError()
+   - simulateStorageQuotaExceeded()
+   - simulateSlowNetwork(latency, packetLoss)
+   
+   Test files:
+   - src/__tests__/errors/connection.test.ts
+   - src/__tests__/errors/crypto.test.ts
+   - src/__tests__/errors/recovery.test.ts
+
+DELIVERABLE:
+- src/lib/connectionErrorHandler.ts
+- src/lib/cryptoErrorHandler.ts
+- src/lib/errorClassifier.ts
+- src/lib/globalErrorHandler.ts
+- src/lib/logger.ts
+- src/components/ErrorBoundary.tsx
+- src/components/ErrorUI.tsx (reusable error display)
+- Sentry + CloudWatch integration configured
+
+PERFORMANCE TARGETS:
+- Error detection < 100ms
+- Auto-recovery attempt < 500ms
+- User notification < 1s
+- No memory leaks during error recovery
+```
+
+---
+
+### PROMPT 2.2: Input Validation & Security Hardening
+
+**For Security-Focused Developer:**
+
+```
+Implement defense-in-depth input validation and rate limiting.
+
+REQUIREMENTS:
+
+1. OTP Validation:
+   File: src/lib/validators.ts
+   
+   Function: validateRoomOTP(otp: string): boolean
+   Rules:
+   - Exactly 6 alphanumeric characters: ^[A-Z0-9]{6}$
+   - Case-insensitive input, convert to uppercase
+   - Reject special characters, spaces, lowercase
+   - Never accept more than 6 characters
+   
+   Errors:
+   - Throw InvalidOTPFormatError if doesn't match
+   - Show specific error: "Room code must be 6 letters or numbers"
+
+2. URL Parameter Sanitization:
+   File: src/lib/urlSanitizer.ts
+   
+   Parse URL search params safely:
+   ```typescript
+   interface RoomParams {
+     room: string
+     action?: 'download_bundle' | 'password_reset'
+     token?: string
+   }
+   
+   function parseRoomParams(url: URL): RoomParams {
+     // Validate room code
+     // Validate action against whitelist
+     // Prevent open redirects
+     // Prevent path traversal
+   }
+   ```
+   
+   Security checks:
+   - Room must be ^[A-Z0-9]{6}$ only
+   - Action must be in whitelist (no arbitrary values)
+   - Token must be valid JWT (if present)
+   - Prevent ?room=javascript:alert(1)
+   - Prevent ?room=//evil.com/payload
+
+3. Rate Limiting (Per Browser):
+   File: src/lib/rateLimiter.ts
+   
+   Implement leaky bucket algorithm:
+   
+   Rules:
+   - Room join: 10 attempts per 60 seconds per IP
+   - File upload: 100 MB per minute per peer
+   - Download: 500 MB per minute per peer
+   - QR scan: 5 scans per 60 seconds
+   - Password check: 5 attempts per 60 seconds
+   
+   On limit exceeded:
+   - Block operation
+   - Show: "Too many attempts. Try again in X seconds"
+   - Log suspicious activity
+   - After 20 failures: Rate limit IP server-side
+
+4. CSRF Protection:
+   File: src/lib/csrfToken.ts
+   
+   For deep links (QR-initiated joins):
+   - Generate state token in sessionStorage
+   - Include in room join request
+   - Server verifies token matches
+   - Prevents tab-jacking attacks
+
+5. Content Security Policy:
+   File: public/index.html & server headers
+   
+   Headers:
+   ```
+   Content-Security-Policy:
+     default-src 'self';
+     script-src 'self' api.anthropic.com;
+     style-src 'self' 'unsafe-inline';  // Tailwind requires inline
+     media-src 'self';
+     img-src 'self' data: blob:;
+     connect-src 'self' api.anthropic.com *.webrtc.org;
+     frame-src 'none';
+     base-uri 'self';
+     form-action 'self'
+   ```
+
+6. XSS Prevention:
+   - Never use innerHTML (use textContent)
+   - React auto-escapes JSX (already safe)
+   - Don't embed user input in URLs without encoding
+   - Sanitize any content from untrusted sources
+
+7. Form Input Validation:
+   File: src/lib/formValidators.ts
+   
+   Functions:
+   - validateEmail(email): boolean
+   - validateFileSize(bytes): boolean  // Max 5GB
+   - validateFileName(name): boolean  // No ../ or special chars
+   - validatePassword(pwd): boolean  // Min 8 chars, complexity rules
+
+8. Validation & Error Messages:
+   Strategy:
+   - Validate on change (UX feedback)
+   - Validate on blur (show errors)
+   - Validate on submit (final check)
+   - Show specific errors (not generic "invalid")
+   
+   Examples:
+   - ✗ "Invalid input"
+   - ✓ "Room code must be 6 letters or numbers (e.g., ABC123)"
+
+9. File Upload Security:
+   File: src/lib/fileValidator.ts
+   
+   Checks:
+   - File type whitelist (no .exe, .dll, .sh, etc.)
+   - File size < 5 GB
+   - File name doesn't contain ../
+   - Check actual MIME type (not just extension)
+   - Scan for suspicious magic bytes
+   
+   Allowed types:
+   - Images: jpg, png, gif, webp (check magic: FFD8FF for JPEG)
+   - Documents: pdf, txt, docx, xlsx
+   - Archives: zip (check for suspicious nesting)
+   - Video: mp4, mov, webm
+
+10. Logging Security Events:
+    File: src/lib/securityLog.ts
+    
+    Events to log:
+    - Failed OTP validation attempts
+    - Rate limit triggered
+    - Suspicious URL parameters detected
+    - File size/type violations
+    - CSRF token mismatch
+    - Invalid JWT tokens
+    
+    Log format (for security team):
+    ```json
+    {
+      "event": "rate_limit_exceeded",
+      "ip": "192.168.1.1",
+      "limit_type": "room_join",
+      "attempts": 15,
+      "timestamp": "2024-07-28T10:30:00Z"
+    }
+    ```
+
+DELIVERABLE:
+- src/lib/validators.ts
+- src/lib/urlSanitizer.ts
+- src/lib/rateLimiter.ts
+- src/lib/csrfToken.ts
+- src/lib/formValidators.ts
+- src/lib/fileValidator.ts
+- src/lib/securityLog.ts
+- CSP configuration
+- Security headers middleware
+
+TESTING:
+- Unit tests for all validators
+- Fuzzing tests with invalid inputs
+- SQL injection attempt tests (for backend)
+- XSS payload tests
+- Path traversal tests
+
+PERFORMANCE:
+- Validation < 10ms per request
+- Rate limiter lookup O(1) complexity
+- No blocking validation
+```
+
+---
+
+### PROMPT 2.3: Room Lifecycle Management & Cleanup
+
+**For Backend/DevOps Engineer:**
+
+```
+Implement complete room lifecycle with automatic cleanup and resource management.
+
+REQUIREMENTS:
+
+1. Room State Machine:
+   File: src/lib/roomStateChart.ts
+   
+   States:
+   - PENDING (0-2 min): Room code generated, awaiting first peer
+   - ACTIVE (max 4 hours): Peers connected, transfers allowed
+   - EXPIRING (30 sec): No activity for 30 min, warn users
+   - CLOSED: Deleted, all peers notified
+   
+   Transitions:
+   PENDING → ACTIVE (first peer joins)
+   ACTIVE → EXPIRING (30 min no activity)
+   EXPIRING → CLOSED (after 30 sec warning)
+   ACTIVE/EXPIRING → CLOSED (time-based: 4 hour max)
+   Any → CLOSED (all peers leave, 5 min idle)
+
+2. Activity Tracking:
+   Track "activity" as:
+   - Any data transfer
+   - Any peer join/leave
+   - Any SDP exchange
+   NOT idle WebRTC connection
+   
+   Update lastActivityAt timestamp on each event
+   Calculate inactivitySeconds = now - lastActivityAt
+
+3. Automatic Cleanup Rules:
+   
+   Rule 1: Inactivity Timeout
+   - If inactivitySeconds > 1800 (30 min): Move to EXPIRING
+   - Send "Room expiring" notification to peers
+   - Wait 30 seconds
+   - If still inactive: Move to CLOSED
+   
+   Rule 2: Max Room Age
+   - If room age > 4 hours: Move to CLOSED
+   - Notify peers: "Room lifetime exceeded"
+   - Force disconnect all peers
+   
+   Rule 3: No Peers
+   - If peerCount = 0 for > 5 min: Delete room
+   - Log cleanup reason
+   
+   Cleanup Task (every 60 seconds):
+   - Query Firestore: rooms where (state=EXPIRING AND expireAt < now)
+   - Query Firestore: rooms where (createdAt < now - 4h)
+   - Move matched rooms to CLOSED
+   - Delete CLOSED rooms from state after 1 hour
+
+4. Per-Room Constraints:
+   
+   Max concurrent peers: 50
+   - Reject join if peerCount >= 50
+   - Error: "Room is full. Try again later."
+   
+   Max data transfer per room: 5 GB
+   - Track totalBytesTransferred
+   - On upload, check: totalBytes + fileSize > 5 GB
+   - If yes: Error "Room storage quota exceeded"
+   - Reset quota on room deletion
+   
+   Max concurrent uploads: 10 per room
+   - Track activeUploads Set
+   - Block if activeUploads.size >= 10
+   - Error: "Too many concurrent uploads. Wait for one to complete."
+
+5. RoomManager Class:
+   File: src/lib/roomManager.ts
+   
+   ```typescript
+   class RoomManager {
+     // Create new room
+     async createRoom(options: RoomCreateOptions): Promise<Room>
+     
+     // Join existing room
+     async joinRoom(roomId: string, peerId: string): Promise<Room>
+     
+     // Leave room
+     async leaveRoom(roomId: string, peerId: string): Promise<void>
+     
+     // Update activity timestamp
+     updateActivity(roomId: string): Promise<void>
+     
+     // Get room stats
+     getRoomStats(roomId: string): Promise<RoomStats>
+     
+     // Manual cleanup (triggered by admin)
+     deleteRoom(roomId: string): Promise<void>
+     
+     // Automatic cleanup (cron job)
+     cleanupExpiredRooms(): Promise<CleanupResult>
+   }
+   
+   Interface RoomStats {
+     roomId: string
+     state: RoomState
+     peerCount: number
+     createdAt: timestamp
+     lastActivityAt: timestamp
+     inactivitySeconds: number
+     bytesTransferred: number
+     activeUploads: number
+     timeUntilExpiry: number  // seconds
+   }
+   ```
+
+6. Database Schema (Firestore):
+   
+   Collection: rooms/{roomId}
+   
+   Document:
+   ```json
+   {
+     "id": "ABC123",
+     "secret": "random_hex_32",
+     "state": "ACTIVE",
+     "createdAt": timestamp,
+     "lastActivityAt": timestamp,
+     "expiresAt": timestamp,
+     "peers": {
+       "peer_id_1": {
+         "joinedAt": timestamp,
+         "lastSeenAt": timestamp,
+         "bytesUploadedBy": number,
+         "verified": boolean
+       }
+     },
+     "bytesTransferred": number,
+     "maxAge": 14400000,  // 4 hours in ms
+     "inactivityTimeout": 1800000,  // 30 min in ms
+     "ttl": timestamp  // Firestore TTL delete field
+   }
+   ```
+   
+   Firestore Rules:
+   ```
+   match /rooms/{roomId} {
+     // Auto-delete after TTL
+     allow read, write if request.auth != null;
+     allow delete if resource.data.ttl < now;
+   }
+   ```
+
+7. Peer Presence Tracking:
+   
+   On peer join:
+   - Add to room.peers map
+   - Store joinedAt timestamp
+   - Emit peer_joined event
+   
+   On peer message received:
+   - Update lastSeenAt for peer
+   - Update room lastActivityAt
+   
+   On peer disconnect (detected via connection state):
+   - Update lastSeenAt
+   - If disconnected > 60 sec: assume peer left
+   - Remove from peers map
+   - Emit peer_left event
+   - If peerCount = 0: Start 5 min countdown to delete
+
+8. Cleanup Task Implementation:
+   
+   File: server/cron/roomCleanup.ts
+   
+   ```typescript
+   async function cleanupExpiredRooms() {
+     const now = Date.now()
+     
+     // Find rooms to close
+     const roomsToClose = await firestore
+       .collection('rooms')
+       .where('expiresAt', '<', now)
+       .get()
+     
+     for (const doc of roomsToClose.docs) {
+       await moveRoomToState(doc.id, 'CLOSED')
+       // Notify peers
+       // Set TTL for deletion
+     }
+     
+     // Find rooms to delete (closed for 1 hour)
+     const roomsToDelete = await firestore
+       .collection('rooms')
+       .where('state', '==', 'CLOSED')
+       .where('stateChangeAt', '<', now - 3600000)
+       .get()
+     
+     for (const doc of roomsToDelete.docs) {
+       await doc.ref.delete()
+     }
+     
+     return { closedCount, deletedCount, timestamp: now }
+   }
+   
+   // Run every 60 seconds
+   setInterval(cleanupExpiredRooms, 60000)
+   ```
+
+9. Notifications to Peers:
+   
+   When room entering EXPIRING state:
+   - Send signal message: {"action": "room_expiring", "timeRemaining": 30}
+   - UI shows: "Room will close in 30 seconds"
+   - User can rejoin same room (extends TTL)
+   
+   When room closing:
+   - Send signal message: {"action": "room_closed", "reason": "inactivity"}
+   - Disconnect all peer connections
+   - Log to analytics
+
+10. Monitoring & Alerts:
+    
+    Metrics to track:
+    - Active rooms count
+    - Rooms in each state (PENDING, ACTIVE, EXPIRING)
+    - Cleanup jobs run (success/failure)
+    - Peer churn rate (joins per minute, leaves per minute)
+    - Average room lifetime
+    - Total bytes transferred per room
+    
+    Alerts:
+    - Cleanup job failing > 3x → PagerDuty alert
+    - Rooms growing unbounded → Check cleanup task
+    - High peer churn → May indicate connectivity issues
+
+DELIVERABLE:
+- src/lib/roomManager.ts
+- src/lib/roomStateChart.ts
+- server/cron/roomCleanup.ts
+- Firestore schema & rules
+- Monitoring dashboard queries
+- Runbook: "Room cleanup troubleshooting"
+
+TESTING:
+- Unit test state transitions
+- Integration test: Create room → wait 31 min → verify cleanup
+- Load test: 1000 rooms, cleanup performance
+- Chaos test: Simulate peer disconnects
+```
+
+---
+
+## 🟢 SPRINT 3: DATA INTEGRITY & MONITORING
+
+### PROMPT 3.1: File Transfer State Machine
+
+**For Backend/Reliability Engineer:**
+
+```
+Implement production-grade file transfer with state management,
+checksum verification, and resume capability.
+
+REQUIREMENTS:
+
+1. File Transfer State Machine:
+   
+   States: QUEUED → UPLOADING → UPLOADED → VERIFYING → COMPLETE → ARCHIVED
+   Also: QUEUED → PAUSED → UPLOADING → ...
+   Error path: Any state → ERROR (with retry logic)
+   
+   Transitions:
+   QUEUED → UPLOADING (when peer available)
+   UPLOADING → PAUSED (user pause or network timeout 30s)
+   PAUSED → UPLOADING (user resume)
+   UPLOADING → UPLOADED (all chunks received)
+   UPLOADED → VERIFYING (checksum validation)
+   VERIFYING → COMPLETE (hash matches)
+   VERIFYING → ERROR (hash mismatch, offer retry)
+   COMPLETE → ARCHIVED (1 hour after completion)
+   ERROR → QUEUED (retry after exponential backoff)
+
+2. Chunking Strategy:
+   
+   Design:
+   - Chunk size: 64 KB (65536 bytes)
+   - Header: [magic:4][version:1][fileId:16][chunkSeq:4][totalChunks:4]
+   - Payload: up to 65536 bytes
+   - Footer: [crc32:4]
+   - Total per chunk: ~65556 bytes
+   
+   Max concurrent chunks: 4 per file
+   - Prevents overwhelming network
+   - Balances parallelism vs latency
+   
+   Chunk ordering:
+   - Sender transmits in sequence (0, 1, 2, ...)
+   - Receiver accepts out-of-order
+   - Stores in Map<chunkSeq, buffer>
+   - Track chunks received in BitSet
+
+3. File Metadata:
+   
+   ```typescript
+   interface FileTransfer {
+     id: string  // UUID
+     name: string
+     size: number  // bytes
+     mimeType: string
+     hash: {
+       algorithm: 'sha256'
+       value: string
+     }
+     created: timestamp
+     lastActivity: timestamp
+     state: TransferState
+     
+     sender: {
+       peerId: string
+       uploadedBytes: number
+       startTime: timestamp
+       pausedTime: number  // total ms paused
+     }
+     
+     receiver: {
+       peerId: string
+       receivedBytes: number
+       chunksReceived: Set<number>
+       localPath?: string
+     }
+     
+     chunks: {
+       total: number
+       received: number
+       failed: Map<number, FailureInfo>  // retry attempts
+     }
+     
+     error?: {
+       code: string
+       message: string
+       retryAttempt: number
+       nextRetry: timestamp
+     }
+   }
+   ```
+
+4. Checksum Verification:
+   
+   Flow:
+   a) Sender computes SHA-256 of file before split
+   b) Send in fileMetadata: {"hash": "abc123..."}
+   c) Receiver accumulates chunks
+   d) After all chunks received, compute SHA-256
+   e) Compare: If match → COMPLETE, else → ERROR
+   
+   Edge cases:
+   - Partial file received (missing chunks) → Error immediately
+   - Corrupted chunk detected (CRC32 fail) → Request retransmit
+   - Network corruption unlikely with WebRTC but still check
+
+5. Resume Capability:
+   
+   Store in IndexedDB:
+   ```
+   Database: flux_transfers
+   Store: transfers
+   Key: fileId
+   Value: {
+     fileId, fileName, fileSize, hash,
+     chunksReceived: [0, 1, 2, 5, 6, ...],
+     localPath, timestamp
+   }
+   ```
+   
+   On disconnect:
+   - Save state to IndexedDB
+   - Show "Transfer paused" UI
+   - Save for 24 hours
+   
+   On reconnect:
+   - Query IndexedDB
+   - Show "Resume transfer?" prompt
+   - Resume from last missing chunk
+   - Send: {"action": "resume_transfer", "fileId": "...", "lastChunk": 42}
+   - Receiver responds with next chunk needed
+
+6. Bandwidth Awareness:
+   
+   Adaptive chunk size:
+   - Start with 64 KB
+   - Monitor RTT and packet loss
+   - If loss > 5%: reduce to 32 KB (less retransmit overhead)
+   - If loss < 1% and RTT < 50ms: increase to 128 KB
+   - Every 10 chunks: re-evaluate
+   
+   Monitoring:
+   ```typescript
+   interface NetworkCondition {
+     rtt: number  // round trip time ms
+     packetLoss: number  // 0-1 (0.05 = 5%)
+     bandwidth: number  // bytes/sec estimate
+   }
+   
+   function getOptimalChunkSize(cond: NetworkCondition): number {
+     if (cond.packetLoss > 0.1) return 16384  // 16 KB
+     if (cond.packetLoss > 0.05) return 32768  // 32 KB
+     if (cond.packetLoss < 0.01 && cond.rtt < 50) return 131072  // 128 KB
+     return 65536  // Default 64 KB
+   }
+   ```
+
+7. Error Handling & Retries:
+   
+   Chunk transmission failures:
+   - First failure: Retry immediately
+   - Second failure: Wait 500ms, retry
+   - Third failure: Wait 2s, retry
+   - Fourth failure: Move to ERROR state, notify user
+   
+   Corrupted chunks:
+   - On CRC32 mismatch: Mark chunk as failed
+   - Request retransmit within 3 seconds
+   - After 3 retries: Likely media corruption, error out
+   
+   Network timeout:
+   - No chunk received for 30 seconds → Pause transfer
+   - Show: "Transfer paused due to inactivity"
+   - User can resume within 24 hours
+   
+   User abort:
+   - Move to ERROR state
+   - Clean up IndexedDB
+   - Show: "Transfer cancelled"
+
+8. Progress Tracking UI:
+   
+   ```typescript
+   interface TransferProgress {
+     fileId: string
+     fileName: string
+     percentComplete: number  // 0-100
+     bytesTransferred: number
+     totalBytes: number
+     currentSpeed: number  // KB/s
+     estimatedTimeRemaining: number  // seconds
+     
+     chunkStatus: {
+       current: number  // Current chunk being sent/received
+       total: number
+       completed: number
+     }
+     
+     errors?: {
+       count: number
+       lastError: string
+     }
+   }
+   ```
+
+9. Backend Tracking (Firestore):
+   
+   Collection: transfers/{transferId}
+   - Store metadata for resumed transfers
+   - TTL: 24 hours (auto-delete after expiry)
+   - Query: "Show my recent transfers"
+
+10. Testing Strategy:
+    
+    Unit tests:
+    - Chunk creation/parsing
+    - Hash computation
+    - State transitions
+    
+    Integration tests:
+    - 10 MB file end-to-end
+    - Pause/resume in middle
+    - Corrupted chunk injection
+    - Network latency simulation
+    
+    Load tests:
+    - 100 concurrent transfers
+    - Measure memory usage
+    - Identify bottlenecks
+
+DELIVERABLE:
+- src/lib/fileTransferEngine.ts
+- src/lib/chunkAssembler.ts
+- src/lib/fileHasher.ts
+- src/lib/transferStateChart.ts
+- src/hooks/useFileTransfer.ts
+- server/transfers/db.ts (Firestore schema)
+- tests/fileTransfer.test.ts
+
+PERFORMANCE TARGETS:
+- 64 KB chunk transmission < 100ms (1 Mbps network)
+- SHA-256 hash of 100 MB file < 500ms
+- State machine transition < 10ms
+- Resume after disconnect < 2 seconds
+```
+
+---
+
+### PROMPT 3.2: Monitoring, Observability & Analytics
+
+**For DevOps/SRE Engineer:**
+
+```
+Implement production monitoring with real-time dashboards and alerting.
+
+REQUIREMENTS:
+
+1. WebRTC Statistics Collection:
+   File: src/lib/metricsCollector.ts
+   
+   Collect every 5 seconds from each peer connection:
+   
+   Inbound RTP (receiving):
+   - bytesReceived
+   - packetsReceived
+   - packetsLost
+   - jitter
+   - fractionLost
+   
+   Outbound RTP (sending):
+   - bytesSent
+   - packetsSent
+   - currentRoundTripTime (RTT)
+   
+   Connection state:
+   - connectionState
+   - iceConnectionState
+   - iceGatheringState
+   
+   Data channel:
+   - bufferedAmount (bytes queued)
+   - messagesReceived
+   - bytesSent
+   
+   Inbound codec:
+   - codec name (if audio/video)
+   - clockRate
+   - channels
+   
+   Calculate derived metrics:
+   - availableOutgoingBitrate = bytesSent / elapsedTime * 8
+   - packetLossRate = packetsLost / (packetsReceived + packetsLost)
+   - averageRTT = rolling average of RTT samples
+
+2. Application Metrics:
+   
+   Room-level:
+   - active_rooms (gauge)
+   - room_lifetime_seconds (histogram)
+   - peers_per_room (histogram)
+   - data_transferred_bytes (counter)
+   - room_creation_latency_ms (histogram)
+   
+   Peer-level:
+   - peer_connection_time_ms (histogram)
+   - peer_disconnections_total (counter)
+   - bytes_sent_per_peer (gauge)
+   - bytes_received_per_peer (gauge)
+   
+   File transfer:
+   - file_transfer_success_rate (gauge, %)
+   - file_transfer_duration_ms (histogram)
+   - file_size_mb_transferred (histogram)
+   - chunk_retransmit_rate (gauge, %)
+   
+   Encryption:
+   - encrypt_latency_ms (histogram)
+   - decrypt_latency_ms (histogram)
+   - crypto_errors_total (counter)
+   
+   Errors:
+   - connection_failures_total (counter, by error type)
+   - timeout_errors_total (counter)
+   - crypto_errors_total (counter)
+
+3. Analytics Events:
+   File: src/lib/analytics.ts
+   
+   ```typescript
+   function track(event: string, properties: Record<string, any>) {
+     const envelope = {
+       timestamp: Date.now(),
+       sessionId: window.sessionId,
+       userId: user?.id,
+       event,
+       properties
+     }
+     // Send to backend
+     fetch('/api/analytics', { method: 'POST', body: JSON.stringify(envelope) })
+   }
+   
+   // Usage:
+   track('room:created', { roomId: 'ABC123', timestamp })
+   track('peer:connected', { peerId: '...', rtt: 45, iceCandidate: 'srflx' })
+   track('file:transfer:started', { fileId, size: 1024000, fileType: 'pdf' })
+   track('file:transfer:completed', { fileId, durationMs: 5000, avgBitrate: 1638 })
+   track('error:connection_failed', { reason: 'iceConnectionFailed', retryAttempt: 2 })
+   ```
+   
+   Important events:
+   - room:created
+   - room:destroyed
+   - peer:connected
+   - peer:disconnected
+   - peer:reconnected
+   - file:transfer:started
+   - file:transfer:completed
+   - file:transfer:failed
+   - file:transfer:paused
+   - file:transfer:resumed
+   - error:*
+   - crypto:error
+   - network:latency (sample every 10s)
+   - network:packetloss (sample every 10s)
+
+4. Backend Analytics Service:
+   File: server/analytics/router.ts
+   
+   Endpoint: POST /api/analytics
+   
+   ```typescript
+   app.post('/api/analytics', (req, res) => {
+     const events = req.body  // Array of events
+     
+     for (const event of events) {
+       // Time-series DB: InfluxDB
+       writeToInflux({
+         measurement: event.event,
+         tags: { roomId: event.roomId },
+         fields: event.properties,
+         timestamp: event.timestamp
+       })
+       
+       // Log aggregation: CloudWatch
+       logger.info('analytics_event', {
+         event: event.event,
+         ...event.properties
+       })
+     }
+     
+     res.json({ ok: true })
+   })
+   ```
+   
+   Batch writes to time-series DB every 60 seconds
+   Keep raw events for 7 days, aggregates for 1 year
+
+5. Real-Time Dashboard:
+   File: server/dashboard/metrics.ts
+   
+   Queries (every 10 seconds):
+   
+   ```typescript
+   // Active metrics
+   getActiveRoomsCount(): number
+   getActivePeersCount(): number
+   getActiveFTCount(): number  // File transfers
+   
+   // Last 24 hours
+   getP50RTT(): number  // Median RTT
+   getP95RTT(): number  // 95th percentile
+   getPacketLossRate(): number  // %
+   
+   // File transfer stats
+   getTransferSuccessRate(): number  // %
+   getAverageFileSize(): number  // bytes
+   getAverageTransferDuration(): number  // seconds
+   
+   // Error rates (last 1 hour)
+   getErrorRateByType(): Map<string, number>
+   getConnectionFailureRate(): number  // %
+   ```
+
+6. Alerts:
+   
+   Critical (page engineer):
+   - Connection failure rate > 10% for 5 minutes
+   - Packet loss > 20%
+   - Database write latency p95 > 10 seconds
+   - Signaling server down
+   
+   Warning (Slack notification):
+   - File transfer success rate < 95%
+   - Average RTT > 500ms
+   - Timeout errors > 5% of connections
+   - Crypto errors present
+   
+   Info (log only):
+   - High peer churn (join/leave rate spike)
+   - Large file transfers (> 1 GB)
+
+7. Logging Strategy:
+   
+   Level: ERROR → log with full stack trace, session ID, context
+   Level: WARN → log issue, suggest cause, include metrics
+   Level: INFO → log milestones (room created, transfer complete)
+   Level: DEBUG → log state changes, enable only in dev
+   
+   Always include:
+   - timestamp (ISO 8601)
+   - sessionId
+   - requestId (correlation)
+   - userId (if authenticated)
+   - roomId / fileId (if applicable)
+   - environment (staging/production)
+   
+   Destinations:
+   - STDERR/STDOUT (for container logs)
+   - CloudWatch Logs (for aggregation)
+   - Sentry (ERROR and WARN only)
+   - S3 (archive for compliance)
+
+8. Session Replay:
+   
+   Use LogRocket:
+   - Capture user interactions on error only (save bandwidth)
+   - Record console logs, errors, network requests
+   - Replay from error occurrence
+   - Link to Sentry issues
+   
+   Privacy:
+   - Mask sensitive data (file names, room IDs)
+   - Don't record password vault contents
+
+9. Performance Profiling:
+   
+   Use web-vitals library:
+   - First Contentful Paint (FCP)
+   - Largest Contentful Paint (LCP)
+   - First Input Delay (FID)
+   - Cumulative Layout Shift (CLS)
+   - Time to Interactive (TTI)
+   
+   Send to backend:
+   ```typescript
+   import { getCLS, getFID, getFCP, getLCP, getTTFB } from 'web-vitals'
+   
+   getCLS(metric => track('web_vital:cls', { value: metric.value }))
+   getFID(metric => track('web_vital:fid', { value: metric.value }))
+   ```
+
+10. Data Retention:
+    
+    Raw events: 7 days (costs money)
+    Hourly aggregates: 90 days
+    Daily aggregates: 1 year
+    Critical errors: 2 years (compliance)
+
+DELIVERABLE:
+- src/lib/metricsCollector.ts
+- src/lib/analytics.ts
+- server/analytics/router.ts
+- server/dashboard/metrics.ts
+- Grafana/Datadog dashboard definitions
+- Alert rules (Prometheus/CloudWatch)
+- LogRocket integration
+- Sentry integration
+
+TOOLS & SERVICES:
+- Metrics: InfluxDB or CloudWatch
+- Logs: CloudWatch Logs or ELK
+- Errors: Sentry
+- Session Replay: LogRocket
+- Dashboards: Grafana or Datadog
+- Alerts: PagerDuty + Slack
+```
+
+---
+
+## 📋 SUMMARY: Quick-Start Checklist
+
+### Week 1-2 (CRITICAL)
+- [ ] PROMPT 1.1: STUN/TURN Manager
+- [ ] PROMPT 1.2: Signaling Server
+- [ ] PROMPT 1.3: Client Signaling Integration
+
+### Week 3-4 (HIGH PRIORITY)
+- [ ] PROMPT 2.1: Error Handling & Recovery
+- [ ] PROMPT 2.2: Input Validation & Security
+- [ ] PROMPT 2.3: Room Lifecycle Management
+
+### Week 5-6 (MEDIUM PRIORITY)
+- [ ] PROMPT 3.1: File Transfer State Machine
+- [ ] PROMPT 3.2: Monitoring & Analytics
+
+### Additional Items
+- [ ] Password Vault completion
+- [ ] Mobile responsiveness testing
+- [ ] Offline resilience
+- [ ] TypeScript strict mode migration
+- [ ] Full test suite
+
+---
+
+**How to use these prompts:**
+1. Copy entire prompt into Claude, ChatGPT, or Copilot
+2. Adjust for your specific tech stack
+3. Iterate on generated code
+4. Add your team's patterns and conventions
+5. Test thoroughly before merging
+
+**Next step:** Pick PROMPT 1.1 and start with STUN/TURN failover. It's high-impact and relatively isolated.
