@@ -63,7 +63,7 @@ export function DashboardScreen({ session, onCreateRoom, onJoinRoom, onUpdateNic
             <Sparkles size={13} /> Private realtime rooms
           </div>
           <h1 className="text-[clamp(3.25rem,8vw,7.8rem)] font-semibold leading-[.88] tracking-[-.085em] text-white">Move work<br /><em className="font-display font-normal not-italic text-white/45">without a trace.</em></h1>
-          <p className="mt-7 max-w-xl text-base leading-7 text-white/55 sm:text-lg">FluxChat gives teams a temporary place to talk and move files together. No profile graph, no archive, no friction between a room and the people in it.</p>
+          <p className="mt-7 max-w-xl text-base leading-7 text-white/55 sm:text-lg">UltronChat gives teams a temporary place to talk and move files together. No profile graph, no archive, no friction between a room and the people in it.</p>
           <div className="mt-8 flex flex-wrap items-center gap-4 font-mono text-[10px] uppercase tracking-[.16em] text-white/45">
             <span className="inline-flex items-center gap-2"><Radio size={14} className="text-[#d6ff62]" /> Live transport</span>
             <span className="inline-flex items-center gap-2"><LockKeyhole size={14} className="text-[#d6ff62]" /> Memory-first</span>

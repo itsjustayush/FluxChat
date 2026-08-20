@@ -37,7 +37,7 @@ async function startServer() {
     app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
-  httpServer.listen(PORT, '0.0.0.0', () => console.log(`[FluxChat] Server listening on http://0.0.0.0:${PORT}`));
+  httpServer.listen(PORT, '0.0.0.0', () => console.log(`[UltronChat] Server listening on http://0.0.0.0:${PORT}`));
 }
 
-startServer().catch((err) => console.error('[FluxChat] Server error:', err));
+startServer().catch((err) => console.error('[UltronChat] Server error:', err));

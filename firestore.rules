@@ -2,7 +2,7 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // FluxChat is intentionally database-free for room state, messages, files,
+    // UltronChat is intentionally database-free for room state, messages, files,
     // presence, and signaling. Deny all access so a stale client cannot turn
     // ephemeral room content into a cloud archive.
     match /{document=**} {

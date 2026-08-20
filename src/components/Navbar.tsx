@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Activity, ChevronDown, Edit3, FolderClock, MessageSquare, Network, Save, ShieldCheck, X } from 'lucide-react';
+import { Activity, ChevronDown, Edit3, FolderClock, MessageSquare, Save, ShieldCheck, X } from 'lucide-react';
 import { ViewMode, UserSession } from '../types';
 
 interface NavbarProps {
@@ -14,7 +14,6 @@ interface NavbarProps {
 const NAV_ITEMS: Array<{ view: ViewMode; label: string; icon: typeof MessageSquare }> = [
   { view: 'DASHBOARD', label: 'Rooms', icon: MessageSquare },
   { view: 'ROOM', label: 'Active room', icon: Activity },
-  { view: 'NETWORK', label: 'Network', icon: Network },
   { view: 'HISTORY', label: 'Memory', icon: FolderClock },
 ];
 
@@ -52,12 +51,12 @@ export function Navbar({ currentView, setView, session, onUpdateNickname, latenc
     <>
       <header className="sticky top-0 z-50 border-b border-white/10 bg-[#050505]/80 backdrop-blur-2xl">
         <div className="mx-auto flex min-h-[76px] w-full max-w-[1440px] items-center justify-between gap-4 px-5 sm:px-8 lg:px-12">
-          <button onClick={() => navigate('DASHBOARD')} className="group flex items-center gap-3 text-left" aria-label="Go to FluxChat rooms">
+          <button onClick={() => navigate('DASHBOARD')} className="group flex items-center gap-3 text-left" aria-label="Go to UltronChat rooms">
             <span className="grid h-10 w-10 place-items-center rounded-xl border border-white/15 bg-white/[.08] shadow-[0_0_24px_rgba(214,255,98,.08)] transition-transform duration-200 group-hover:scale-105">
               <span className="h-3 w-3 rotate-45 rounded-[3px] bg-[#d6ff62] shadow-[0_0_18px_rgba(214,255,98,.8)]" />
             </span>
             <span className="hidden sm:block">
-              <span className="block font-semibold tracking-[-.04em] text-white">Flux<span className="text-[#d6ff62]">Chat</span></span>
+              <span className="block font-semibold tracking-[-.04em] text-white">Ultron<span className="text-[#d6ff62]">Chat</span></span>
               <span className="block font-mono text-[9px] uppercase tracking-[.22em] text-white/40">Private by design</span>
             </span>
           </button>

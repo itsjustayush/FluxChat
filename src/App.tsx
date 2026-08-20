@@ -5,7 +5,6 @@ import { Navbar } from './components/Navbar';
 import { DashboardScreen } from './components/DashboardScreen';
 import { RoomView } from './components/RoomView';
 import { FilePreviewModal } from './components/FilePreviewModal';
-import { NetworkTopologyScreen } from './components/NetworkTopologyScreen';
 import { HistoryScreen } from './components/HistoryScreen';
 import { generateRoomOTP } from './lib/p2pEngine';
 import { getOrCreateGuestSession, updateGuestNickname } from './lib/session';
@@ -79,13 +78,18 @@ export default function App() {
       <main className="relative z-10 min-h-[calc(100vh-76px)]">
         {currentView === 'DASHBOARD' || currentView === 'AUTH' ? <DashboardScreen session={session} onCreateRoom={handleCreateRoom} onJoinRoom={handleJoinRoom} setView={setCurrentView} onUpdateNickname={handleUpdateNickname} /> : null}
         {currentView === 'ROOM' && <RoomView room={room} session={session} onLeaveRoom={() => setCurrentView('DASHBOARD')} onPreviewFile={setPreviewFile} onAddBundleItem={handleAddBundleItem} />}
-        {currentView === 'NETWORK' && <NetworkTopologyScreen room={room} />}
         {currentView === 'HISTORY' && <HistoryScreen bundleItems={room.bundleItems} onWipeSession={handleWipeSession} />}
       </main>
       {previewFile && <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} onDownload={handleDownloadFile} />}
-      <footer className="relative z-10 mx-auto flex w-full max-w-[1440px] items-center justify-between gap-4 border-t border-white/10 px-5 py-6 font-mono text-[10px] uppercase tracking-[.16em] text-white/35 sm:px-8 lg:px-12">
-        <span>FluxChat / ephemeral collaboration</span>
-        <span className="inline-flex items-center gap-2"><ShieldCheck size={13} className="text-[#d6ff62]" /> No room archive</span>
+      <footer className="relative z-10 mx-auto flex w-full max-w-[1440px] flex-col gap-4 border-t border-white/10 px-5 py-6 font-mono text-[10px] uppercase tracking-[.16em] text-white/35 sm:px-8 lg:px-12">
+        <span>UltronChat / ephemeral collaboration</span>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:justify-end">
+          <span className="inline-flex items-center gap-2"><ShieldCheck size={13} className="text-[#d6ff62]" /> Built by Ayush Bhattacharya</span>
+          <a href="https://github.com/itsjustayush" target="_blank" rel="noreferrer" className="text-white/45 transition-colors hover:text-[#d6ff62]">GitHub</a>
+          <a href="https://github.com/itsjustayush/UltronChat" target="_blank" rel="noreferrer" className="text-white/45 transition-colors hover:text-[#d6ff62]">Repo</a>
+          <a href="https://itsjustayush.vercel.app/" target="_blank" rel="noreferrer" className="text-white/45 transition-colors hover:text-[#d6ff62]">Portfolio</a>
+          <a href="mailto:info.cometlabs@gmail.com" className="text-white/45 transition-colors hover:text-[#d6ff62]">Email</a>
+        </div>
       </footer>
     </div>
   );

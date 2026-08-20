@@ -1,4 +1,4 @@
-export type ViewMode = 'AUTH' | 'DASHBOARD' | 'ROOM' | 'NETWORK' | 'HISTORY';
+export type ViewMode = 'AUTH' | 'DASHBOARD' | 'ROOM' | 'HISTORY';
 
 export interface UserSession {
   id: string;
