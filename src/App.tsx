@@ -6,7 +6,7 @@ import { DashboardScreen } from './components/DashboardScreen';
 import { RoomView } from './components/RoomView';
 import { FilePreviewModal } from './components/FilePreviewModal';
 import { HistoryScreen } from './components/HistoryScreen';
-import { generateRoomOTP } from './lib/p2pEngine';
+import { generateRoomOTP, normalizeRoomId } from './lib/p2pEngine';
 import { getOrCreateGuestSession, updateGuestNickname } from './lib/session';
 
 const createInitialRoom = (session: UserSession, roomId = 'X-R92-K', hostId = session.id): RoomState => ({
@@ -19,21 +19,48 @@ const createInitialRoom = (session: UserSession, roomId = 'X-R92-K', hostId = se
   selectedTargetPeerId: 'ALL_BUNDLE',
 });
 
+async function findActiveRoom(roomId: string) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const response = await fetch(`/api/signal/rooms/${encodeURIComponent(roomId)}`);
+    if (response.ok) return response.json();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error('Room not found or expired.');
+}
+
+function clearRoomQuery() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('room');
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
 export default function App() {
   const [session, setSession] = useState<UserSession>(() => getOrCreateGuestSession());
   const [currentView, setCurrentView] = useState<ViewMode>('DASHBOARD');
   const [latencyMs] = useState(12);
   const [room, setRoom] = useState<RoomState>(() => createInitialRoom(session));
   const [previewFile, setPreviewFile] = useState<BundleItem | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
-    if (!roomParam) return;
-    const cleanRoom = roomParam.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
-    if (cleanRoom.length < 3) return;
-    setRoom(createInitialRoom(session, cleanRoom, 'HOST_NODE'));
-    setCurrentView('ROOM');
+    const cleanRoom = roomParam ? normalizeRoomId(roomParam) : '';
+    if (cleanRoom.length !== 6) return;
+
+    let cancelled = false;
+    findActiveRoom(cleanRoom)
+      .then((activeRoom) => {
+        if (cancelled) return;
+        setRoom(createInitialRoom(session, cleanRoom, activeRoom.hostPeerId || 'HOST_NODE'));
+        clearRoomQuery();
+        setCurrentView('ROOM');
+      })
+      .catch(() => {
+        if (!cancelled) setJoinError('This room is no longer active. Ask the host for a fresh code.');
+      });
+
+    return () => { cancelled = true; };
   }, [session]);
 
   const handleUpdateNickname = (newName: string) => {
@@ -43,16 +70,31 @@ export default function App() {
   };
 
   const handleCreateRoom = () => {
-    const newOtp = generateRoomOTP();
-    setRoom({ ...createInitialRoom(session, newOtp), messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'FLUX SYSTEM', text: `Private room ${newOtp} created. Content is kept in memory for this session.`, timestamp: Date.now(), type: 'system' }] });
+    const newOtp = normalizeRoomId(generateRoomOTP());
+    setJoinError(null);
+    setRoom({ ...createInitialRoom(session, newOtp), messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'ULTRONCHAT SYSTEM', text: `Private room ${newOtp} created. Content is kept in memory for this session.`, timestamp: Date.now(), type: 'system' }] });
     setCurrentView('ROOM');
   };
 
-  const handleJoinRoom = (otpCode: string) => {
-    const cleanOtp = otpCode.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 12);
+  const handleJoinRoom = async (otpCode: string) => {
+    const cleanOtp = normalizeRoomId(otpCode);
     if (cleanOtp.length !== 6) return;
-    setRoom({ ...createInitialRoom(session, cleanOtp, 'HOST_NODE'), messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'FLUX SYSTEM', text: `Joined room ${cleanOtp}. Signaling is transient; room content is not archived.`, timestamp: Date.now(), type: 'system' }] });
-    setCurrentView('ROOM');
+    setJoinError(null);
+
+    try {
+      const activeRoom = await findActiveRoom(cleanOtp);
+      setRoom({ ...createInitialRoom(session, cleanOtp, activeRoom.hostPeerId || 'HOST_NODE'), messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'ULTRONCHAT SYSTEM', text: `Joined room ${cleanOtp}. Signaling is transient; room content is not archived.`, timestamp: Date.now(), type: 'system' }] });
+      clearRoomQuery();
+      setCurrentView('ROOM');
+    } catch {
+      setJoinError('No active room matches that code. Check the code or ask the host to reopen the room.');
+    }
+  };
+
+  const handleLeaveRoom = () => {
+    setPreviewFile(null);
+    setRoom(createInitialRoom(session));
+    setCurrentView('DASHBOARD');
   };
 
   const handleAddBundleItem = (item: BundleItem) => setRoom((prev) => ({ ...prev, bundleItems: [item, ...prev.bundleItems] }));
@@ -76,8 +118,8 @@ export default function App() {
       <div className="noise-overlay" aria-hidden="true" />
       <Navbar currentView={currentView} setView={setCurrentView} session={session} onUpdateNickname={handleUpdateNickname} latencyMs={latencyMs} />
       <main className="relative z-10 min-h-[calc(100vh-76px)]">
-        {currentView === 'DASHBOARD' || currentView === 'AUTH' ? <DashboardScreen session={session} onCreateRoom={handleCreateRoom} onJoinRoom={handleJoinRoom} setView={setCurrentView} onUpdateNickname={handleUpdateNickname} /> : null}
-        {currentView === 'ROOM' && <RoomView room={room} session={session} onLeaveRoom={() => setCurrentView('DASHBOARD')} onPreviewFile={setPreviewFile} onAddBundleItem={handleAddBundleItem} />}
+        {currentView === 'DASHBOARD' || currentView === 'AUTH' ? <DashboardScreen session={session} onCreateRoom={handleCreateRoom} onJoinRoom={handleJoinRoom} joinError={joinError} setView={setCurrentView} onUpdateNickname={handleUpdateNickname} /> : null}
+        {currentView === 'ROOM' && <RoomView room={room} session={session} onLeaveRoom={handleLeaveRoom} onPreviewFile={setPreviewFile} onAddBundleItem={handleAddBundleItem} />}
         {currentView === 'HISTORY' && <HistoryScreen bundleItems={room.bundleItems} onWipeSession={handleWipeSession} />}
       </main>
       {previewFile && <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} onDownload={handleDownloadFile} />}

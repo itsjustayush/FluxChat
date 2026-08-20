@@ -6,7 +6,8 @@ import { ViewMode, UserSession } from '../types';
 interface DashboardScreenProps {
   session: UserSession;
   onCreateRoom: () => void;
-  onJoinRoom: (otpCode: string) => void;
+  onJoinRoom: (otpCode: string) => Promise<void>;
+  joinError?: string | null;
   setView: (view: ViewMode) => void;
   onUpdateNickname?: (newName: string) => void;
 }
@@ -17,10 +18,11 @@ const guarantees = [
   'Files remain in local memory until wiped',
 ];
 
-export function DashboardScreen({ session, onCreateRoom, onJoinRoom, onUpdateNickname }: DashboardScreenProps) {
+export function DashboardScreen({ session, onCreateRoom, onJoinRoom, joinError, onUpdateNickname }: DashboardScreenProps) {
   const [otpValues, setOtpValues] = useState<string[]>(['', '', '', '', '', '']);
   const [editingNick, setEditingNick] = useState(false);
   const [nickVal, setNickVal] = useState(session.identifier);
+  const [isJoining, setIsJoining] = useState(false);
   const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
 
   const handleOtpChange = (index: number, event: ChangeEvent<HTMLInputElement>) => {
@@ -43,9 +45,15 @@ export function DashboardScreen({ session, onCreateRoom, onJoinRoom, onUpdateNic
     if (event.key === 'ArrowRight' && index < 5) inputRefs.current[index + 1]?.focus();
   };
 
-  const handleJoin = () => {
+  const handleJoin = async () => {
     const code = otpValues.join('');
-    if (code.length === 6) onJoinRoom(code);
+    if (code.length !== 6 || isJoining) return;
+    setIsJoining(true);
+    try {
+      await onJoinRoom(code);
+    } finally {
+      setIsJoining(false);
+    }
   };
 
   const handleSaveNick = (event: FormEvent) => {
@@ -101,7 +109,8 @@ export function DashboardScreen({ session, onCreateRoom, onJoinRoom, onUpdateNic
             <div className="flex gap-2 sm:gap-3" role="group" aria-label="Six-character room code">
               {otpValues.map((value, index) => <input key={index} ref={(element) => { inputRefs.current[index] = element; }} value={value} onChange={(event) => handleOtpChange(index, event)} onKeyDown={(event) => handleOtpKeyDown(index, event)} aria-label={`Room code character ${index + 1}`} inputMode="text" autoComplete="one-time-code" maxLength={1} className="h-14 min-w-0 flex-1 rounded-xl border border-white/15 bg-black/25 text-center font-mono text-xl text-white outline-none transition-all focus:border-[#d6ff62] focus:bg-[#d6ff62]/10" />)}
             </div>
-            <button onClick={handleJoin} disabled={otpValues.join('').length !== 6} className="liquid-button liquid-button--solid mt-4 w-full disabled:cursor-not-allowed disabled:opacity-35"><ClipboardPaste size={16} /> Enter room <ArrowRight size={16} /></button>
+            <button onClick={handleJoin} disabled={otpValues.join('').length !== 6 || isJoining} className="liquid-button liquid-button--solid mt-4 w-full disabled:cursor-not-allowed disabled:opacity-35"><ClipboardPaste size={16} /> {isJoining ? 'Checking active room…' : 'Enter room'} {!isJoining && <ArrowRight size={16} />}</button>
+            {joinError && <p role="alert" className="mt-3 rounded-xl border border-[#ff8e8e]/30 bg-[#ff8e8e]/[.08] px-3 py-2.5 font-mono text-[10px] uppercase tracking-[.08em] text-[#ffb2b2]">{joinError}</p>}
           </div>
         </article>
       </section>

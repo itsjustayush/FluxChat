@@ -17,6 +17,7 @@ import {
 } from '../lib/p2pEngine';
 import { QRCodeModal } from './QRCodeModal';
 import { ActivityToastContainer, ActivityToastData } from './ActivityToast';
+import { ThemedFileUpload } from './ThemedFileUpload';
 
 async function arrayBufferToDataUrl(buffer: ArrayBuffer, mimeType: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -65,7 +66,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
   onAddBundleItem,
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
+  const [isProcessingFiles, setIsProcessingFiles] = useState(false);
   const [webrtcState, setWebrtcState] = useState<WebRTCConnectionState>('connected');
   const [errorToasts, setErrorToasts] = useState<ErrorToast[]>([]);
   const [activityToasts, setActivityToasts] = useState<ActivityToastData[]>([]);
@@ -242,7 +243,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const localPeerId = session?.id || room.activePeers.find((p) => p.isYou)?.id || 'LOCAL_PEER';
-  const isHost = room.hostId === localPeerId;
+  const [isRoomHost, setIsRoomHost] = useState(room.hostId === localPeerId);
   const peerEngineRef = useRef<WebRTCPeerEngine | null>(null);
 
   const bundleItemsRef = useRef<BundleItem[]>(room.bundleItems);
@@ -274,8 +275,14 @@ export const RoomView: React.FC<RoomViewProps> = ({
     signalingUrl: '/ws',
     roomId: room.id,
     peerId: localPeerId,
-    isHost,
+    isHost: isRoomHost,
     onRoomState: (data) => {
+      if (data.hostPeerId) {
+        setIsRoomHost(data.hostPeerId === localPeerId);
+      }
+      if (data.event === 'host_changed' && data.hostPeerId) {
+        setIsRoomHost(data.hostPeerId === localPeerId);
+      }
       if (data.event === 'peer_joined') {
         const joinedId = data.peerId;
         setPeersList((prev) => {
@@ -304,7 +311,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
           },
         ]);
 
-        if (isHost && peerEngineRef.current) {
+        if (isRoomHost && peerEngineRef.current) {
           peerEngineRef.current.createOffer().then((offer) => {
             if (offer) sendOffer(joinedId, offer);
           });
@@ -635,6 +642,15 @@ export const RoomView: React.FC<RoomViewProps> = ({
       return;
     }
 
+    if (fileSize > 16 * 1024 * 1024) {
+      addErrorToast('ERR_FILE_SIZE', 'Files above 16 MB require the chunked transfer channel and were not sent.');
+      return;
+    }
+    if (peersList.length < 2 || peerEngineRef.current?.dataChannel?.readyState !== 'open') {
+      addErrorToast('ERR_DIRECT_CHANNEL', 'Direct peer link is not ready. Connect to a peer before sharing files.');
+      return;
+    }
+
     try {
       const fileBuffer = await file.arrayBuffer();
       const sha256Hex = await calculateSHA256(fileBuffer);
@@ -684,16 +700,8 @@ export const RoomView: React.FC<RoomViewProps> = ({
       setChatMessages((prev) => [...prev, fileChatNotice]);
 
       // Share only over the active WebRTC channel. No file bytes or metadata are
-      // written to a cloud collection; if a direct channel is unavailable we fail
-      // closed instead of silently falling back to persistent storage.
-      if (peerEngineRef.current?.dataChannel?.readyState !== 'open') {
-        addErrorToast('ERR_DIRECT_CHANNEL', 'Direct peer link is not ready. Connect to a peer before sharing files.');
-        return;
-      }
-      if (fileSize > 16 * 1024 * 1024) {
-        addErrorToast('ERR_FILE_SIZE', 'Files above 16 MB require the chunked transfer channel and were not sent.');
-        return;
-      }
+      // written to a cloud collection; the preflight above fails closed when a
+      // direct channel is unavailable.
       peerEngineRef.current.dataChannel.send(JSON.stringify({
         type: 'BUNDLE_ITEM_SHARE',
         item: {
@@ -717,36 +725,24 @@ export const RoomView: React.FC<RoomViewProps> = ({
     }
   };
 
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      (Array.from(e.target.files) as File[]).forEach((file) => processSingleFile(file));
+  const handleFilesSelected = async (files: File[]) => {
+    if (!files.length) return;
+    setIsProcessingFiles(true);
+    try {
+      await Promise.all(files.map((file) => processSingleFile(file)));
+    } finally {
+      setIsProcessingFiles(false);
     }
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = () => {
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      (Array.from(e.dataTransfer.files) as File[]).forEach((file) => processSingleFile(file));
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      void handleFilesSelected(Array.from(e.target.files));
     }
   };
 
   return (
-    <div
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      className="room-shell min-h-screen pt-16 pb-12 px-3 sm:px-8 bg-[#F2F2EE] flex flex-col"
-    >
+    <div className="room-shell page-reveal min-h-screen pt-16 pb-12 px-3 sm:px-8 bg-[#F2F2EE] flex flex-col">
       {/* Top Header Bar */}
       <div className="w-full max-w-[1280px] mx-auto mt-2 mb-4">
         <div className="bg-white/90 backdrop-blur-xl border border-[#192837]/10 rounded-2xl p-4 flex flex-wrap justify-between items-center gap-4 shadow-xs">
@@ -822,15 +818,6 @@ export const RoomView: React.FC<RoomViewProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Drag & drop overlay indicator */}
-      {isDragging && (
-        <div className="fixed inset-0 z-50 bg-[#7342E2]/80 backdrop-blur-md flex flex-col items-center justify-center text-white border-4 border-dashed border-white m-4 rounded-3xl pointer-events-none">
-          <span className="material-symbols-outlined text-6xl mb-2 animate-bounce">upload_file</span>
-          <div className="font-heading text-2xl font-bold">Drop files to share in room</div>
-          <div className="font-mono text-xs opacity-90 mt-1">Direct peer transfer • memory only</div>
-        </div>
-      )}
 
       {/* Main Split Layout: Left Chat + Right Files/Dropzone */}
       <div className="w-full max-w-[1280px] mx-auto flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[580px]">
@@ -1114,20 +1101,11 @@ export const RoomView: React.FC<RoomViewProps> = ({
         {/* Right Column: File Dropzone & Bundle List (5 cols) */}
         <div className="lg:col-span-5 flex flex-col gap-4">
           {/* File Dropzone */}
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className="bg-white/80 border-2 border-dashed border-[#7342E2]/40 hover:border-[#7342E2] rounded-3xl p-6 text-center cursor-pointer transition-all hover:bg-white shadow-xs group"
-          >
-            <span className="material-symbols-outlined text-4xl text-[#7342E2] mb-1 group-hover:scale-110 transition-transform">
-              cloud_upload
-            </span>
-            <div className="font-heading text-base font-bold text-[#192837]">
-              DROP OR CLICK TO SHARE FILES
-            </div>
-            <div className="font-mono text-xs text-[#192837]/60 mt-0.5">
-              WEBRTC DTLS • DIRECT P2P
-            </div>
-          </div>
+          <ThemedFileUpload
+            onFiles={handleFilesSelected}
+            isProcessing={isProcessingFiles}
+            disabled={peersList.length < 2}
+          />
 
           {/* Ephemeral Bundle / Files List */}
           <div className="bg-white/90 backdrop-blur-2xl border border-[#192837]/10 rounded-3xl p-5 flex-1 flex flex-col justify-between shadow-sm min-h-[320px]">

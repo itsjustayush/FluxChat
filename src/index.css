@@ -140,3 +140,16 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 720px) {
   .app-shell::before { background-size: 38px 38px; }
 }
+
+/* Active room migration layer: keep the existing workflow, but make every surface
+   read as part of the same UltronChat visual system. */
+.room-shell [class*="bg-[#7342E2]"] { background-color: var(--accent) !important; color: #101010 !important; }
+.room-shell [class*="bg-[#7342E2]/10"], .room-shell [class*="bg-[#7342E2]/20"] { background-color: var(--accent-soft) !important; color: var(--accent) !important; }
+.room-shell [class*="text-[#7342E2]"] { color: var(--accent) !important; }
+.room-shell [class*="border-[#7342E2]"] { border-color: rgba(214,255,98,.35) !important; }
+.room-shell [class*="bg-emerald-500/10"] { background-color: rgba(214,255,98,.08) !important; }
+.room-shell [class*="text-emerald-700"], .room-shell [class*="text-emerald-600"] { color: var(--accent) !important; }
+.room-shell [class*="border-emerald-500"] { border-color: rgba(214,255,98,.3) !important; }
+.room-shell [class*="bg-red-600"] { background-color: rgba(255,142,142,.12) !important; border: 1px solid rgba(255,142,142,.3); }
+.room-shell [class*="text-red-600"] { color: #ffb2b2 !important; }
+.room-shell [class*="bg-[#7342E2]"][class*="text-white"] { color: #101010 !important; }

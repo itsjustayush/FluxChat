@@ -10,6 +10,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 export interface SignalMessage {
   type:
     | 'join'
+    | 'leave'
     | 'offer'
     | 'answer'
     | 'candidate'
@@ -32,18 +33,23 @@ export interface SignalMessage {
 export interface RoomState {
   roomId: string;
   peers: Map<string, WebSocket | null>;
+  hostPeerId: string;
   createdAt: number;
   lastActivity: number;
 }
 
 const MAX_SIGNAL_BYTES = 64 * 1024;
 const MAX_QUEUE_MESSAGES = 100;
-const ROOM_ID_PATTERN = /^[A-Za-z0-9_-]{3,32}$/;
+const ROOM_ID_PATTERN = /^[A-Z0-9]{3,32}$/;
 const PEER_ID_PATTERN = /^[A-Za-z0-9_-]{3,80}$/;
 
 function normalizeChannel(roomId?: string): string | null {
-  if (!roomId || !ROOM_ID_PATTERN.test(roomId)) return null;
-  return roomId.startsWith('room-') ? roomId.toUpperCase() : `room-${roomId.toUpperCase()}`;
+  if (!roomId) return null;
+  const raw = String(roomId).trim().toUpperCase();
+  const withoutPrefix = raw.startsWith('ROOM-') ? raw.slice(5) : raw;
+  const cleanRoomId = withoutPrefix.replace(/[^A-Z0-9]/g, '');
+  if (!ROOM_ID_PATTERN.test(cleanRoomId)) return null;
+  return `ROOM-${cleanRoomId}`;
 }
 
 function isSafeMessage(message: SignalMessage): boolean {
@@ -120,6 +126,22 @@ export class SignalingServer {
       });
     });
 
+    this.app.get('/rooms/:roomId', (req, res) => {
+      const channelId = normalizeChannel(req.params.roomId);
+      const room = channelId ? this.rooms.get(channelId) : undefined;
+      if (!room) {
+        res.status(404).json({ active: false, error: 'Room not found or expired' });
+        return;
+      }
+      res.json({
+        active: true,
+        roomId: room.roomId.replace(/^ROOM-/, ''),
+        hostPeerId: room.hostPeerId,
+        peers: Array.from(room.peers.keys()),
+        peerCount: room.peers.size,
+      });
+    });
+
     this.app.get('/stats', (req, res) => {
       const stats = {
         totalRooms: this.rooms.size,
@@ -178,6 +200,8 @@ export class SignalingServer {
     if (!isSafeMessage(message)) return;
     if (message.type === 'join') {
       this.handleJoin(null, message);
+    } else if (message.type === 'leave') {
+      this.handleLeave(null, message);
     } else if (['offer', 'answer', 'candidate', 'chat', 'chat_ack', 'typing', 'reaction'].includes(message.type)) {
       if (message.targetPeerId) {
         this.relayMessage(null, message);
@@ -219,6 +243,10 @@ export class SignalingServer {
   private handleMessage(ws: WebSocket, message: SignalMessage) {
     if (!isSafeMessage(message)) {
       this.sendError(ws, 'Invalid or oversized signaling payload');
+      return;
+    }
+    if (message.type === 'leave') {
+      this.handleLeave(ws, message);
       return;
     }
     if (message.type !== 'join' && message.type !== 'ping' && !this.peerToRoom.has(ws)) {
@@ -285,6 +313,7 @@ export class SignalingServer {
         room = {
           roomId: channelId,
           peers: new Map(),
+          hostPeerId: peerId,
           createdAt: Date.now(),
           lastActivity: Date.now(),
         };
@@ -306,8 +335,8 @@ export class SignalingServer {
       if (ws) this.sendError(ws, 'Peer identity is already active in this room');
       return;
     }
-    room.peers.set(peerId, ws);
-    if (ws) {
+      room.peers.set(peerId, ws);
+      if (ws) {
       this.peerToRoom.set(ws, { roomId: channelId, peerId });
     }
     room.lastActivity = Date.now();
@@ -323,6 +352,7 @@ export class SignalingServer {
       data: {
         peerId,
         peers: existingPeers,
+        hostPeerId: room.hostPeerId,
         roomSize: room.peers.size,
       },
       timestamp: Date.now(),
@@ -334,6 +364,7 @@ export class SignalingServer {
       data: {
         event: 'peer_joined',
         peerId,
+        hostPeerId: room.hostPeerId,
         roomSize: room.peers.size,
       },
       timestamp: Date.now(),
@@ -439,41 +470,49 @@ export class SignalingServer {
     });
   }
 
+    private handleLeave(ws: WebSocket | null, message: SignalMessage) {
+    const peerInfo = ws ? this.peerToRoom.get(ws) : undefined;
+    const roomId = peerInfo?.roomId || normalizeChannel(message.roomId || '');
+    const peerId = peerInfo?.peerId || message.peerId;
+    if (!roomId || !peerId) return;
+
+    const room = this.rooms.get(roomId);
+    if (!room || !room.peers.has(peerId)) return;
+
+    room.peers.delete(peerId);
+    if (room.hostPeerId === peerId) {
+      room.hostPeerId = room.peers.keys().next().value || '';
+      if (room.hostPeerId) {
+        this.broadcastToRoom(roomId, {
+          type: 'room_state',
+          data: { event: 'host_changed', hostPeerId: room.hostPeerId },
+          timestamp: Date.now(),
+        });
+      }
+    }
+    room.lastActivity = Date.now();
+    this.broadcastToRoom(roomId, {
+      type: 'room_state',
+      data: { event: 'peer_left', peerId, roomSize: room.peers.size },
+      timestamp: Date.now(),
+    });
+
+    if (ws) {
+      this.peerToRoom.delete(ws);
+      this.stopHeartbeat(ws);
+    }
+    if (room.peers.size === 0) {
+      this.rooms.delete(roomId);
+      console.log(`[SignalingServer] Deleted empty room ${roomId}`);
+    } else {
+      console.log(`[SignalingServer] Peer ${peerId} left room ${roomId} (remaining: ${room.peers.size})`);
+    }
+  }
+
   private handleDisconnect(ws: WebSocket) {
     const peerInfo = this.peerToRoom.get(ws);
     if (!peerInfo) return;
-
-    const { roomId, peerId } = peerInfo;
-    const room = this.rooms.get(roomId);
-
-    if (room) {
-      room.peers.delete(peerId);
-      room.lastActivity = Date.now();
-
-      // Notify other peers of disconnection
-      this.broadcastToRoom(roomId, {
-        type: 'room_state',
-        data: {
-          event: 'peer_left',
-          peerId,
-          roomSize: room.peers.size,
-        },
-        timestamp: Date.now(),
-      });
-
-      // Remove empty rooms
-      if (room.peers.size === 0) {
-        this.rooms.delete(roomId);
-        console.log(`[SignalingServer] Deleted empty room ${roomId}`);
-      }
-
-      console.log(
-        `[SignalingServer] Peer ${peerId} left room ${roomId} (remaining: ${room.peers.size})`
-      );
-    }
-
-    this.peerToRoom.delete(ws);
-    this.stopHeartbeat(ws);
+    this.handleLeave(ws, { type: 'leave', roomId: peerInfo.roomId, peerId: peerInfo.peerId });
   }
 
   private startHeartbeat(ws: WebSocket) {
@@ -503,7 +542,7 @@ export class SignalingServer {
         if (now - room.lastActivity > this.inactivityTimeout) {
           // Close all connections in inactive room
           room.peers.forEach((ws) => {
-            ws.close(4000, 'Room inactivity timeout');
+            if (ws) ws.close(4000, 'Room inactivity timeout');
           });
           toDelete.push(roomId);
           console.log(

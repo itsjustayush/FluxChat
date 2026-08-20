@@ -191,6 +191,14 @@ export function validateTransferQuota(
 }
 
 /**
+ * Canonicalize room IDs across input, URLs, QR codes, and signaling.
+ * Dashes, spaces, and case differences are presentation details only.
+ */
+export function normalizeRoomId(roomId: string): string {
+  return roomId.replace(/^room-/i, '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 32);
+}
+
+/**
  * Generates a 6-character alphanumeric room OTP code (e.g., XR92KB).
  * Displayed with a middle dash for readability (XR-92-KB) but stored as plain 6 chars.
  */

@@ -397,6 +397,18 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
    * Disconnect from signaling server
    */
   const disconnect = useCallback(() => {
+    const leaveMessage = { type: 'leave' as const, roomId, peerId, timestamp: Date.now() };
+    if (modeRef.current === 'http') {
+      fetch('/api/signal/post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(leaveMessage),
+        keepalive: true,
+      }).catch(() => {});
+    } else if (wsRef.current?.readyState === WebSocket.OPEN) {
+      try { wsRef.current.send(JSON.stringify(leaveMessage)); } catch {}
+    }
+
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
@@ -415,7 +427,7 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
     setConnecting(false);
     messageQueueRef.current = [];
     reconnectAttemptsRef.current = 0;
-  }, [stopHeartbeat, stopHttpPolling]);
+  }, [roomId, peerId, stopHeartbeat, stopHttpPolling]);
 
   /**
    * Setup and teardown effects - only reconnect if roomId, peerId, or signalingUrl actually changes
