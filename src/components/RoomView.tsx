@@ -272,9 +272,10 @@ export const RoomView: React.FC<RoomViewProps> = ({
   }, [chatMessages, typingPeersMap]);
 
   const { sendSignal, sendOffer, sendAnswer, sendCandidate } = useSignaling({
-    signalingUrl: '/ws',
+    signalingUrl: 'registry',
     roomId: room.id,
     peerId: localPeerId,
+    peerName: session?.identifier || 'Guest',
     isHost: isRoomHost,
     onRoomState: (data) => {
       if (data.hostPeerId) {

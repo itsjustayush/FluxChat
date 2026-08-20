@@ -8,6 +8,7 @@ import { FilePreviewModal } from './components/FilePreviewModal';
 import { HistoryScreen } from './components/HistoryScreen';
 import { generateRoomOTP, normalizeRoomId } from './lib/p2pEngine';
 import { getOrCreateGuestSession, updateGuestNickname } from './lib/session';
+import { callRoomRegistry } from './lib/roomRegistry';
 
 const createInitialRoom = (session: UserSession, roomId = 'X-R92-K', hostId = session.id): RoomState => ({
   id: roomId,
@@ -50,9 +51,10 @@ export default function App() {
 
     let cancelled = false;
     findActiveRoom(cleanRoom)
-      .then((activeRoom) => {
+      .then(async (activeRoom) => {
         if (cancelled) return;
-        setRoom(createInitialRoom(session, cleanRoom, activeRoom.hostPeerId || 'HOST_NODE'));
+        const registry = await callRoomRegistry('join', { roomCode: cleanRoom, peerId: session.id, peerName: session.identifier });
+        setRoom(createInitialRoom(session, cleanRoom, registry.host_peer_id || activeRoom.hostPeerId || 'HOST_NODE'));
         clearRoomQuery();
         setCurrentView('ROOM');
       })
@@ -69,11 +71,17 @@ export default function App() {
     setRoom((prev) => ({ ...prev, activePeers: prev.activePeers.map((peer) => peer.isYou ? { ...peer, name: updated.identifier } : peer) }));
   };
 
-  const handleCreateRoom = () => {
+  const handleCreateRoom = async () => {
     const newOtp = normalizeRoomId(generateRoomOTP());
     setJoinError(null);
-    setRoom({ ...createInitialRoom(session, newOtp), messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'ULTRONCHAT SYSTEM', text: `Private room ${newOtp} created. Content is kept in memory for this session.`, timestamp: Date.now(), type: 'system' }] });
-    setCurrentView('ROOM');
+    try {
+      const registry = await callRoomRegistry('create', { roomCode: newOtp, peerId: session.id, peerName: session.identifier });
+      if (!registry.active || registry.room_code !== newOtp) throw new Error('The shared room registry did not confirm room creation.');
+      setRoom({ ...createInitialRoom(session, newOtp, registry.host_peer_id || session.id), messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'ULTRONCHAT SYSTEM', text: `Private room ${newOtp} created. This room is now shared across active instances.`, timestamp: Date.now(), type: 'system' }] });
+      setCurrentView('ROOM');
+    } catch {
+      setJoinError('Could not create a shared room right now. Please try again.');
+    }
   };
 
   const handleJoinRoom = async (otpCode: string) => {
@@ -83,7 +91,8 @@ export default function App() {
 
     try {
       const activeRoom = await findActiveRoom(cleanOtp);
-      setRoom({ ...createInitialRoom(session, cleanOtp, activeRoom.hostPeerId || 'HOST_NODE'), messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'ULTRONCHAT SYSTEM', text: `Joined room ${cleanOtp}. Signaling is transient; room content is not archived.`, timestamp: Date.now(), type: 'system' }] });
+      const registry = await callRoomRegistry('join', { roomCode: cleanOtp, peerId: session.id, peerName: session.identifier });
+      setRoom({ ...createInitialRoom(session, cleanOtp, registry.host_peer_id || activeRoom.hostPeerId || 'HOST_NODE'), messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'ULTRONCHAT SYSTEM', text: `Joined room ${cleanOtp}. This instance is mapped to the shared active room.`, timestamp: Date.now(), type: 'system' }] });
       clearRoomQuery();
       setCurrentView('ROOM');
     } catch {
@@ -92,6 +101,7 @@ export default function App() {
   };
 
   const handleLeaveRoom = () => {
+    void callRoomRegistry('leave', { roomCode: room.id, peerId: session.id }).catch(() => {});
     setPreviewFile(null);
     setRoom(createInitialRoom(session));
     setCurrentView('DASHBOARD');

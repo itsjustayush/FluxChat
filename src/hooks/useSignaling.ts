@@ -10,6 +10,7 @@ export interface UseSignalingOptions {
   signalingUrl: string;
   roomId: string;
   peerId: string;
+  peerName?: string;
   isHost?: boolean;
   onRoomState?: (data: any) => void;
   onSignal?: (message: SignalMessage) => void;
@@ -38,6 +39,7 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
     signalingUrl,
     roomId,
     peerId,
+    peerName,
     isHost,
     onRoomState,
     onSignal,
@@ -63,6 +65,7 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
   const lastHeartbeatRef = useRef<number>(Date.now());
   const connectRef = useRef<(() => void) | null>(null);
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const registryHeartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
   const modeRef = useRef<'ws' | 'http'>('ws');
 
   /**
@@ -75,15 +78,40 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
     }
   }, []);
 
+  const stopRegistryHeartbeat = useCallback(() => {
+    if (registryHeartbeatTimerRef.current) {
+      clearInterval(registryHeartbeatTimerRef.current);
+      registryHeartbeatTimerRef.current = null;
+    }
+  }, []);
+
+  const registryRequest = useCallback(async (action: string) => {
+    const response = await fetch('/api/signal/registry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, roomCode: roomId, peerId, peerName }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data?.error || 'Room registry unavailable');
+    return data;
+  }, [roomId, peerId, peerName]);
+
+  const startRegistryHeartbeat = useCallback(() => {
+    stopRegistryHeartbeat();
+    registryHeartbeatTimerRef.current = setInterval(() => {
+      registryRequest('heartbeat').catch(() => {});
+    }, 25000);
+  }, [registryRequest, stopRegistryHeartbeat]);
+
   /**
    * Send a message through WebSocket or HTTP
    */
   const sendMessage = useCallback((message: SignalMessage) => {
     if (modeRef.current === 'http') {
-      fetch('/api/signal/post', {
+      fetch('/api/signal/registry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(message),
+        body: JSON.stringify({ action: 'signal', roomCode: roomId, peerId, targetPeerId: message.targetPeerId, type: message.type, data: message.data }),
       }).catch(() => {});
       return;
     }
@@ -97,7 +125,7 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
         console.warn('[useSignaling] Message queue overflow, dropping message');
       }
     }
-  }, []);
+  }, [roomId, peerId]);
 
   /**
    * Send WebRTC offer
@@ -266,22 +294,22 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
     setConnecting(false);
     setError(null);
 
-    // Send join message via HTTP
-    fetch('/api/signal/post', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'join',
-        roomId,
-        peerId,
-        isHost: callbacksRef.current.isHost,
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
+    registryRequest('join')
+      .then((data) => callbacksRef.current.onRoomState?.({
+        peers: (data.peers || []).map((peer: { peer_id: string }) => peer.peer_id).filter((id: string) => id !== peerId),
+        hostPeerId: data.host_peer_id,
+        roomSize: data.peers?.length || 1,
+      }))
+      .catch((error) => callbacksRef.current.onError?.(error instanceof Error ? error.message : 'Room registry unavailable'));
+    startRegistryHeartbeat();
 
-    // Start poll loop every 800ms
+    // Start registry event polling every 800ms so separate app instances share the same room.
     pollTimerRef.current = setInterval(() => {
-      fetch(`/api/signal/poll?roomId=${encodeURIComponent(roomId)}&peerId=${encodeURIComponent(peerId)}`)
+      fetch('/api/signal/registry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'poll', roomCode: roomId, peerId, peerName }),
+      })
         .then((res) => res.json())
         .then((data) => {
           if (data && Array.isArray(data.messages)) {
@@ -292,12 +320,16 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
         })
         .catch(() => {});
     }, 800);
-  }, [roomId, peerId, handleMessage, stopHttpPolling]);
+  }, [roomId, peerId, peerName, handleMessage, registryRequest, startRegistryHeartbeat, stopHttpPolling]);
 
   /**
    * Connect to signaling server
    */
   const connect = useCallback(() => {
+    if (signalingUrl === 'registry') {
+      startHttpPolling();
+      return;
+    }
     if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) {
       return; // Already connecting or connected
     }
@@ -338,7 +370,18 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
         setError(null);
         reconnectAttemptsRef.current = 0;
 
-        // Join room
+        // WebSocket remains the low-latency transport, while the shared registry
+        // owns canonical room identity and peer expiry.
+        registryRequest('join')
+          .then((data) => {
+            callbacksRef.current.onRoomState?.({
+              peers: (data.peers || []).map((peer: { peer_id: string }) => peer.peer_id).filter((id: string) => id !== peerId),
+              hostPeerId: data.host_peer_id,
+              roomSize: data.peers?.length || 1,
+            });
+            startRegistryHeartbeat();
+          })
+          .catch((error) => callbacksRef.current.onError?.(error instanceof Error ? error.message : 'Room registry unavailable'));
         ws.send(
           JSON.stringify({
             type: 'join',
@@ -399,10 +442,10 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
   const disconnect = useCallback(() => {
     const leaveMessage = { type: 'leave' as const, roomId, peerId, timestamp: Date.now() };
     if (modeRef.current === 'http') {
-      fetch('/api/signal/post', {
+      fetch('/api/signal/registry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(leaveMessage),
+        body: JSON.stringify({ action: 'leave', roomCode: roomId, peerId }),
         keepalive: true,
       }).catch(() => {});
     } else if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -416,6 +459,7 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
 
     stopHeartbeat();
     stopHttpPolling();
+    stopRegistryHeartbeat();
 
     if (wsRef.current) {
       const ws = wsRef.current;
@@ -427,7 +471,7 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
     setConnecting(false);
     messageQueueRef.current = [];
     reconnectAttemptsRef.current = 0;
-  }, [roomId, peerId, stopHeartbeat, stopHttpPolling]);
+  }, [roomId, peerId, stopHeartbeat, stopHttpPolling, stopRegistryHeartbeat]);
 
   /**
    * Setup and teardown effects - only reconnect if roomId, peerId, or signalingUrl actually changes

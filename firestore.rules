@@ -2,9 +2,9 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // UltronChat is intentionally database-free for room state, messages, files,
-    // presence, and signaling. Deny all access so a stale client cannot turn
-    // ephemeral room content into a cloud archive.
+    // Room and peer presence are stored in the dedicated Supabase registry.
+    // Firestore remains disabled so messages, files, and signaling content cannot
+    // become a cloud archive through a stale client.
     match /{document=**} {
       allow read, write: if false;
     }

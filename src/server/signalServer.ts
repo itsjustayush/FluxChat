@@ -6,6 +6,7 @@
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import { roomRegistry } from './roomRegistryClient';
 
 export interface SignalMessage {
   type:
@@ -126,20 +127,45 @@ export class SignalingServer {
       });
     });
 
-    this.app.get('/rooms/:roomId', (req, res) => {
+    this.app.get('/rooms/:roomId', async (req, res) => {
       const channelId = normalizeChannel(req.params.roomId);
-      const room = channelId ? this.rooms.get(channelId) : undefined;
-      if (!room) {
-        res.status(404).json({ active: false, error: 'Room not found or expired' });
+      if (!channelId) {
+        res.status(400).json({ active: false, error: 'Invalid room code' });
         return;
       }
-      res.json({
-        active: true,
-        roomId: room.roomId.replace(/^ROOM-/, ''),
-        hostPeerId: room.hostPeerId,
-        peers: Array.from(room.peers.keys()),
-        peerCount: room.peers.size,
-      });
+      try {
+        const registryRoom = await roomRegistry('lookup', { roomCode: channelId.replace(/^ROOM-/, '') });
+        res.json({
+          active: true,
+          roomId: registryRoom.room_code,
+          hostPeerId: registryRoom.host_peer_id,
+          peers: (registryRoom.peers || []).map((peer) => peer.peer_id),
+          peerCount: registryRoom.peers?.length || 0,
+        });
+      } catch (error: any) {
+        res.status(error?.status === 404 ? 404 : 503).json({ active: false, error: error?.message || 'Room registry unavailable' });
+      }
+    });
+
+    this.app.post('/registry', async (req, res) => {
+      const body = req.body || {};
+      const action = typeof body.action === 'string' ? body.action : '';
+      const roomCode = normalizeChannel(body.roomCode || body.roomId || '');
+      const peerId = body.peerId;
+      if (!action || !roomCode || (peerId && !PEER_ID_PATTERN.test(peerId))) {
+        res.status(400).json({ error: 'Invalid room registry request' });
+        return;
+      }
+      try {
+        const result = await roomRegistry(action, {
+          ...body,
+          roomCode: roomCode.replace(/^ROOM-/, ''),
+          peerId,
+        });
+        res.json(result);
+      } catch (error: any) {
+        res.status(error?.status || 503).json({ error: error?.message || 'Room registry unavailable', code: error?.code });
+      }
     });
 
     this.app.get('/stats', (req, res) => {
