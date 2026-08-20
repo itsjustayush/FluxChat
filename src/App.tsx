@@ -120,7 +120,7 @@ export default function App() {
 
   const handleWipeSession = () => {
     if (!window.confirm('Wipe this tab’s in-memory files and messages? This cannot be undone.')) return;
-    setRoom((prev) => ({ ...prev, bundleItems: [], messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'FLUX SYSTEM', text: 'Local session memory wiped.', timestamp: Date.now(), type: 'system' }] }));
+    setRoom((prev) => ({ ...prev, bundleItems: [], messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'ULTRONCHAT SYSTEM', text: 'Local session memory wiped.', timestamp: Date.now(), type: 'system' }] }));
   };
 
   return (

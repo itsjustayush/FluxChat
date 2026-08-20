@@ -12,7 +12,7 @@ export function getOrCreateGuestSession(): UserSession {
       id: 'guest_node_0',
       email: 'guest@ultron.chat',
       identifier: 'Guest-0000',
-      authenticated: true,
+      authenticated: false,
       nodeType: 'EPH_NODE_0.5.0',
       encryptionAlgorithm: 'AES-256-GCM',
     };
@@ -42,7 +42,7 @@ export function getOrCreateGuestSession(): UserSession {
     id: uuid,
     email: `${nickname.toLowerCase()}@ultron.chat`,
     identifier: nickname,
-    authenticated: true,
+    authenticated: false,
     nodeType: 'EPH_NODE_0.5.0',
     encryptionAlgorithm: 'AES-256-GCM',
   };

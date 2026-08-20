@@ -31,7 +31,7 @@ export const ActivityToastContainer: React.FC<ActivityToastProps> = ({ toasts, o
                 ? 'bg-[#0D1520]/95 border-emerald-500/40 text-emerald-100 shadow-emerald-950/30'
                 : isLeave
                 ? 'bg-[#0D1520]/95 border-rose-500/40 text-rose-100 shadow-rose-950/30'
-                : 'bg-[#0D1520]/95 border-[#7342E2]/40 text-purple-100 shadow-purple-950/30'
+                : 'bg-[#0D1520]/95 border-[#d6ff62]/40 text-[#efffbf] shadow-[#d6ff62]/10'
             }`}
           >
             <div className="flex items-center gap-3 overflow-hidden">
@@ -41,7 +41,7 @@ export const ActivityToastContainer: React.FC<ActivityToastProps> = ({ toasts, o
                     ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                     : isLeave
                     ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                    : 'bg-[#7342E2]/20 text-[#7342E2] border border-[#7342E2]/30'
+                    : 'bg-[#d6ff62]/10 text-[#d6ff62] border border-[#d6ff62]/30'
                 }`}
               >
                 <span className="material-symbols-outlined text-lg">
@@ -60,7 +60,7 @@ export const ActivityToastContainer: React.FC<ActivityToastProps> = ({ toasts, o
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                         : isLeave
                         ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                        : 'bg-[#7342E2]/20 text-purple-300 border border-[#7342E2]/30'
+                        : 'bg-[#d6ff62]/10 text-[#d6ff62] border border-[#d6ff62]/30'
                     }`}
                   >
                     {isJoin ? 'JOINED' : isLeave ? 'LEFT' : 'INFO'}

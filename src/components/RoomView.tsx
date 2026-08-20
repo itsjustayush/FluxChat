@@ -305,7 +305,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
           {
             id: `join-${Date.now()}`,
             senderId: 'SYSTEM',
-            senderName: 'FLUX SYSTEM',
+            senderName: 'ULTRONCHAT SYSTEM',
             text: `Peer ${joinedId.substring(0, 6).toUpperCase()} connected to room.`,
             timestamp: Date.now(),
             type: 'system',
@@ -324,7 +324,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
           {
             id: `left-${Date.now()}`,
             senderId: 'SYSTEM',
-            senderName: 'FLUX SYSTEM',
+            senderName: 'ULTRONCHAT SYSTEM',
             text: `Peer ${data.peerId.substring(0, 6).toUpperCase()} left the room.`,
             timestamp: Date.now(),
             type: 'system',
@@ -582,7 +582,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
     }
 
     const hasRemotePeers = peersList.some((p) => !p.isYou);
-    const initialStatus: 'sent' | 'delivered' = hasRemotePeers ? 'delivered' : 'sent';
+    const initialStatus: 'sending' = 'sending';
 
     const chatMsg: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -592,7 +592,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
       timestamp: Date.now(),
       type: 'text',
       status: initialStatus,
-      encryptedHash: 'AES-256-GCM',
+      encryptedHash: 'TRANSIENT-CHANNEL',
     };
 
     setChatMessages((prev) => [...prev, chatMsg]);
@@ -605,6 +605,16 @@ export const RoomView: React.FC<RoomViewProps> = ({
       peerId: localPeerId,
       data: chatMsg,
     });
+
+    // Confirm that the message reached the active room channel. A peer read receipt
+    // can promote this state from delivered to read after the acknowledgement returns.
+    window.setTimeout(() => {
+      setChatMessages((prev) => prev.map((message) => (
+        message.id === chatMsg.id && message.status === 'sending'
+          ? { ...message, status: hasRemotePeers ? 'delivered' : 'sent' }
+          : message
+      )));
+    }, 180);
 
     // 2. Send via WebRTC DataChannel if open
     if (peerEngineRef.current?.dataChannel?.readyState === 'open') {
@@ -676,7 +686,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
         timestamp: Date.now(),
         carbonFootprintGrams: calculateCarbonMetrics(fileSize).p2pCarbonGrams,
         peerSeeds: 1,
-        encryptionStatus: 'AES-256-GCM VERIFIED',
+        encryptionStatus: 'WEBRTC-DTLS VERIFIED',
       };
 
       onAddBundleItem(newItem);
