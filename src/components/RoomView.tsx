@@ -14,6 +14,8 @@ import {
   validateTransferQuota,
   WebRTCConnectionState,
   formatRoomOTPDisplay,
+  MAX_FILE_SIZE,
+  RTC_DATA_CHANNEL_CHUNK_SIZE,
 } from '../lib/p2pEngine';
 import { QRCodeModal } from './QRCodeModal';
 import { ActivityToastContainer, ActivityToastData } from './ActivityToast';
@@ -42,6 +44,30 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([u8arr], { type: mime });
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function waitForDataChannelCapacity(channel: RTCDataChannel): Promise<void> {
+  while (channel.readyState === 'open' && channel.bufferedAmount > 256 * 1024) {
+    await new Promise((resolve) => window.setTimeout(resolve, 20));
+  }
+  if (channel.readyState !== 'open') throw new Error('Direct peer channel closed during file transfer.');
+}
+
 interface RoomViewProps {
   room: RoomState;
   session?: UserSession;
@@ -54,6 +80,25 @@ interface ErrorToast {
   id: string;
   code: string;
   message: string;
+}
+
+interface IncomingFileTransfer {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  fileTypeLabel: string;
+  fileId: string;
+  sha256: string;
+  encryptedHash: string;
+  uploaderId: string;
+  uploaderName: string;
+  timestamp: number;
+  carbonFootprintGrams: number;
+  totalChunks: number;
+  receivedBytes: number;
+  chunks: Array<string | undefined>;
+  startedAt: number;
 }
 
 const QUICK_EMOJIS = ['👍', '❤️', '🔥', '🎉', '😮', '😂'];
@@ -240,6 +285,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
   const [logs, setLogs] = useState<SystemLogEntry[]>([]);
   const [transfer, setTransfer] = useState<TransferProgress | null>(null);
+  const incomingTransfersRef = useRef<Record<string, IncomingFileTransfer>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const localPeerId = session?.id || room.activePeers.find((p) => p.isYou)?.id || 'LOCAL_PEER';
@@ -424,79 +470,152 @@ export const RoomView: React.FC<RoomViewProps> = ({
       setWebrtcState(state);
     };
 
-    peerEngine.onDataReceived = (data) => {
-      if (typeof data === 'string') {
-        try {
-          const parsed = JSON.parse(data);
-          if (parsed.type === 'CHAT_MESSAGE' && parsed.data) {
-            const chatMsg = parsed.data as ChatMessage;
-            setChatMessages((prev) => {
-              if (prev.some((m) => m.id === chatMsg.id)) return prev;
-              return [...prev, { ...chatMsg, status: 'read' }];
-            });
+    peerEngine.onDataReceived = async (data) => {
+      if (typeof data !== 'string') return;
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed.type === 'CHAT_MESSAGE' && parsed.data) {
+          const chatMsg = parsed.data as ChatMessage;
+          setChatMessages((prev) => {
+            if (prev.some((m) => m.id === chatMsg.id)) return prev;
+            return [...prev, { ...chatMsg, status: 'read' }];
+          });
 
-            if (chatMsg.senderId !== localPeerId && peerEngineRef.current?.dataChannel?.readyState === 'open') {
-              try {
-                peerEngineRef.current.dataChannel.send(
-                  JSON.stringify({ type: 'CHAT_ACK', messageId: chatMsg.id, status: 'read' })
-                );
-              } catch (e) {
-                // ignore
-              }
-            }
-          } else if (parsed.type === 'TYPING_STATUS') {
-            const { peerId, isTyping, senderName } = parsed;
-            if (peerId && peerId !== localPeerId) {
-              handleRemoteTypingStatus(peerId, Boolean(isTyping), senderName);
-            }
-          } else if (parsed.type === 'REACTION' && parsed.messageId && parsed.emoji) {
-            applyReactionUpdate(parsed.messageId, parsed.emoji, parsed.updatedPeers || []);
-          } else if (parsed.type === 'CHAT_ACK' && parsed.messageId) {
-            setChatMessages((prev) =>
-              prev.map((m) => (m.id === parsed.messageId ? { ...m, status: parsed.status || 'read' } : m))
+          if (chatMsg.senderId !== localPeerId && peerEngineRef.current?.dataChannel?.readyState === 'open') {
+            peerEngineRef.current.dataChannel.send(
+              JSON.stringify({ type: 'CHAT_ACK', messageId: chatMsg.id, status: 'read' })
             );
-          } else if (parsed.type === 'BUNDLE_ITEM_SHARE' && parsed.item) {
-            const dataItem = parsed.item;
-            const exists = bundleItemsRef.current.some((i) => i.id === dataItem.id);
-            if (!exists) {
-              let rawBlob: Blob | undefined;
-              let blobUrl: string | undefined;
-
-              if (dataItem.dataUrl) {
-                rawBlob = dataUrlToBlob(dataItem.dataUrl);
-                blobUrl = URL.createObjectURL(rawBlob);
-              } else if (dataItem.textContent) {
-                rawBlob = new Blob([dataItem.textContent], { type: dataItem.type || 'text/plain' });
-                blobUrl = URL.createObjectURL(rawBlob);
-              }
-
-              const receivedItem: BundleItem = {
-                id: dataItem.id,
-                name: dataItem.name,
-                size: dataItem.size,
-                type: dataItem.type,
-                fileTypeLabel: dataItem.fileTypeLabel,
-                fileId: dataItem.fileId,
-                dimensions: dataItem.dimensions,
-                sha256: dataItem.sha256,
-                encryptedHash: dataItem.encryptedHash,
-                blobUrl,
-                rawBlob,
-                textContent: dataItem.textContent,
-                uploaderId: dataItem.uploaderId,
-                uploaderName: dataItem.uploaderName,
-                timestamp: dataItem.timestamp,
-                carbonFootprintGrams: dataItem.carbonFootprintGrams,
-                peerSeeds: dataItem.peerSeeds || 1,
-                encryptionStatus: 'WEBRTC DTLS TRANSPORT',
-              };
-
-              onAddBundleItem(receivedItem);
-            }
           }
-        } catch (e) {
-          console.error('[WebRTC] DataChannel receive parse error:', e);
+        } else if (parsed.type === 'TYPING_STATUS') {
+          const { peerId, isTyping, senderName } = parsed;
+          if (peerId && peerId !== localPeerId) handleRemoteTypingStatus(peerId, Boolean(isTyping), senderName);
+        } else if (parsed.type === 'REACTION' && parsed.messageId && parsed.emoji) {
+          applyReactionUpdate(parsed.messageId, parsed.emoji, parsed.updatedPeers || []);
+        } else if (parsed.type === 'CHAT_ACK' && parsed.messageId) {
+          setChatMessages((prev) => prev.map((m) => (
+            m.id === parsed.messageId ? { ...m, status: parsed.status || 'read' } : m
+          )));
+        } else if (parsed.type === 'FILE_START' && parsed.file) {
+          const file = parsed.file;
+          const size = Number(file.size);
+          const totalChunks = Number(file.totalChunks);
+          const quotaResult = validateTransferQuota(
+            size,
+            bundleItemsRef.current.reduce((total, item) => total + item.size, 0),
+          );
+          if (!file.id || !Number.isSafeInteger(size) || size < 0 || !Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > 100000 || !quotaResult.valid) {
+            addErrorToast('ERR_FILE_LIMIT', quotaResult.errorMessage || 'Incoming file exceeds the safe transfer limit.');
+            return;
+          }
+          incomingTransfersRef.current[file.id] = {
+            ...file,
+            size,
+            totalChunks,
+            receivedBytes: 0,
+            chunks: new Array(totalChunks),
+            startedAt: Date.now(),
+          };
+          setTransfer({
+            active: true,
+            fileName: file.name,
+            fileSize: file.size,
+            transferredBytes: 0,
+            progressPercent: 0,
+            currentSpeedMBps: 0,
+            etaSeconds: 0,
+            targetPeerId: file.uploaderId,
+            mode: 'BUNDLE',
+            carbonEmittedGrams: file.carbonFootprintGrams || 0,
+            encryptedChunksCount: 0,
+            totalChunks: file.totalChunks,
+          });
+        } else if (parsed.type === 'FILE_CHUNK') {
+          const incoming = incomingTransfersRef.current[parsed.fileId];
+          if (!incoming || Date.now() - incoming.startedAt > 10 * 60 * 1000) {
+            delete incomingTransfersRef.current[parsed.fileId];
+            return;
+          }
+          const index = Number(parsed.index);
+          if (!Number.isInteger(index) || index < 0 || index >= incoming.totalChunks || typeof parsed.payload !== 'string') return;
+          if (!incoming.chunks[index]) {
+            incoming.chunks[index] = parsed.payload;
+            incoming.receivedBytes += base64ToBytes(parsed.payload).byteLength;
+            setTransfer((current) => current ? {
+              ...current,
+              transferredBytes: incoming.receivedBytes,
+              progressPercent: Math.min(100, Math.round((incoming.receivedBytes / incoming.size) * 100)),
+              encryptedChunksCount: incoming.chunks.filter(Boolean).length,
+            } : current);
+          }
+        } else if (parsed.type === 'FILE_END') {
+          const incoming = incomingTransfersRef.current[parsed.fileId];
+          if (!incoming) return;
+          const complete = incoming.chunks.length === incoming.totalChunks && incoming.chunks.every(Boolean) && incoming.receivedBytes === incoming.size;
+          if (!complete) {
+            delete incomingTransfersRef.current[parsed.fileId];
+            setTransfer(null);
+            addErrorToast('ERR_FILE_INCOMPLETE', 'The direct file transfer ended before all chunks arrived.');
+            return;
+          }
+
+          const rawBlob = new Blob(incoming.chunks.map((chunk) => base64ToBytes(chunk as string)), { type: incoming.type });
+          const actualHash = await calculateSHA256(await rawBlob.arrayBuffer());
+          if (actualHash !== incoming.sha256) {
+            delete incomingTransfersRef.current[parsed.fileId];
+            setTransfer(null);
+            addErrorToast('ERR_FILE_HASH', 'The received file failed integrity verification and was discarded.');
+            return;
+          }
+
+          const blobUrl = URL.createObjectURL(rawBlob);
+          const receivedItem: BundleItem = {
+            id: incoming.id,
+            name: incoming.name,
+            size: incoming.size,
+            type: incoming.type,
+            fileTypeLabel: incoming.fileTypeLabel,
+            fileId: incoming.fileId,
+            dimensions: `${(incoming.size / 1024).toFixed(1)} KB`,
+            sha256: incoming.sha256,
+            encryptedHash: incoming.encryptedHash,
+            blobUrl,
+            rawBlob,
+            uploaderId: incoming.uploaderId,
+            uploaderName: incoming.uploaderName,
+            timestamp: incoming.timestamp,
+            carbonFootprintGrams: incoming.carbonFootprintGrams,
+            peerSeeds: 1,
+            encryptionStatus: 'WEBRTC-DTLS VERIFIED',
+          };
+          onAddBundleItem(receivedItem);
+          setChatMessages((prev) => [...prev, {
+            id: `file-chat-${incoming.id}`,
+            senderId: incoming.uploaderId,
+            senderName: incoming.uploaderName,
+            text: `Shared file: ${incoming.name} (${formatBytes(incoming.size)})`,
+            timestamp: Date.now(),
+            type: 'file_notice',
+            attachment: {
+              fileName: incoming.name,
+              fileSize: incoming.size,
+              fileId: incoming.id,
+              blobUrl,
+              fileTypeLabel: incoming.fileTypeLabel,
+            },
+          }]);
+          delete incomingTransfersRef.current[parsed.fileId];
+          setTransfer(null);
+        } else if (parsed.type === 'BUNDLE_ITEM_SHARE' && parsed.item) {
+          // Backward-compatible path for older clients; new clients always chunk.
+          const dataItem = parsed.item;
+          if (!bundleItemsRef.current.some((i) => i.id === dataItem.id)) {
+            const rawBlob = dataItem.dataUrl ? dataUrlToBlob(dataItem.dataUrl) : undefined;
+            const blobUrl = rawBlob ? URL.createObjectURL(rawBlob) : undefined;
+            onAddBundleItem({ ...dataItem, rawBlob, blobUrl, encryptionStatus: 'WEBRTC DTLS TRANSPORT' });
+          }
         }
+      } catch (e) {
+        console.error('[WebRTC] DataChannel receive parse error:', e);
       }
     };
 
@@ -653,8 +772,8 @@ export const RoomView: React.FC<RoomViewProps> = ({
       return;
     }
 
-    if (fileSize > 16 * 1024 * 1024) {
-      addErrorToast('ERR_FILE_SIZE', 'Files above 16 MB require the chunked transfer channel and were not sent.');
+    if (fileSize > MAX_FILE_SIZE) {
+      addErrorToast('ERR_FILE_SIZE', `Files above ${formatBytes(MAX_FILE_SIZE)} are not supported in ephemeral browser memory.`);
       return;
     }
     if (peersList.length < 2 || peerEngineRef.current?.dataChannel?.readyState !== 'open') {
@@ -665,7 +784,6 @@ export const RoomView: React.FC<RoomViewProps> = ({
     try {
       const fileBuffer = await file.arrayBuffer();
       const sha256Hex = await calculateSHA256(fileBuffer);
-      const dataUrl = await arrayBufferToDataUrl(fileBuffer, fileType);
       const rawBlob = new Blob([fileBuffer], { type: fileType });
       const blobUrl = URL.createObjectURL(rawBlob);
 
@@ -689,9 +807,8 @@ export const RoomView: React.FC<RoomViewProps> = ({
         encryptionStatus: 'WEBRTC-DTLS VERIFIED',
       };
 
-      onAddBundleItem(newItem);
-
-      // Create a chat file notice message
+      // Create a chat file notice message; commit it locally only after the
+      // complete chunk sequence has been accepted by the direct channel.
       const fileChatNotice: ChatMessage = {
         id: `file-chat-${newItem.id}`,
         senderId: localPeerId,
@@ -708,14 +825,27 @@ export const RoomView: React.FC<RoomViewProps> = ({
         },
       };
 
-      setChatMessages((prev) => [...prev, fileChatNotice]);
+      const channel = peerEngineRef.current.dataChannel;
+      const totalChunks = Math.ceil(fileBuffer.byteLength / RTC_DATA_CHANNEL_CHUNK_SIZE);
+      setTransfer({
+        active: true,
+        fileName,
+        fileSize,
+        transferredBytes: 0,
+        progressPercent: 0,
+        currentSpeedMBps: 0,
+        etaSeconds: 0,
+        targetPeerId: peersList.find((peer) => !peer.isYou)?.id || 'PEER',
+        mode: 'BUNDLE',
+        carbonEmittedGrams: newItem.carbonFootprintGrams,
+        encryptedChunksCount: 0,
+        totalChunks,
+      });
 
-      // Share only over the active WebRTC channel. No file bytes or metadata are
-      // written to a cloud collection; the preflight above fails closed when a
-      // direct channel is unavailable.
-      peerEngineRef.current.dataChannel.send(JSON.stringify({
-        type: 'BUNDLE_ITEM_SHARE',
-        item: {
+      await waitForDataChannelCapacity(channel);
+      channel.send(JSON.stringify({
+        type: 'FILE_START',
+        file: {
           id: newItem.id,
           name: newItem.name,
           size: newItem.size,
@@ -728,9 +858,36 @@ export const RoomView: React.FC<RoomViewProps> = ({
           uploaderName: newItem.uploaderName,
           timestamp: newItem.timestamp,
           carbonFootprintGrams: newItem.carbonFootprintGrams,
-          dataUrl,
+          totalChunks,
         },
       }));
+
+      for (let index = 0; index < totalChunks; index += 1) {
+        await waitForDataChannelCapacity(channel);
+        const start = index * RTC_DATA_CHANNEL_CHUNK_SIZE;
+        const end = Math.min(start + RTC_DATA_CHANNEL_CHUNK_SIZE, fileBuffer.byteLength);
+        const payload = bytesToBase64(new Uint8Array(fileBuffer.slice(start, end)));
+        channel.send(JSON.stringify({
+          type: 'FILE_CHUNK',
+          fileId: newItem.id,
+          index,
+          totalChunks,
+          payload,
+        }));
+        const transferredBytes = end;
+        setTransfer((current) => current ? {
+          ...current,
+          transferredBytes,
+          progressPercent: Math.round((transferredBytes / fileSize) * 100),
+          encryptedChunksCount: index + 1,
+        } : current);
+      }
+
+      await waitForDataChannelCapacity(channel);
+      channel.send(JSON.stringify({ type: 'FILE_END', fileId: newItem.id, totalChunks }));
+      onAddBundleItem(newItem);
+      setChatMessages((prev) => [...prev, fileChatNotice]);
+      window.setTimeout(() => setTransfer(null), 900);
     } catch (err: any) {
       addErrorToast('ERR_ENCRYPT_FAIL', err?.message || 'Failed to encrypt file.');
     }
@@ -1116,7 +1273,27 @@ export const RoomView: React.FC<RoomViewProps> = ({
             onFiles={handleFilesSelected}
             isProcessing={isProcessingFiles}
             disabled={peersList.length < 2}
+            maxFileSize={MAX_FILE_SIZE}
           />
+
+          {transfer && (
+            <div className="rounded-2xl border border-[#d6ff62]/25 bg-[#d6ff62]/[.06] p-4 shadow-[0_0_24px_rgba(214,255,98,.06)]">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-mono text-[10px] font-bold uppercase tracking-[.16em] text-[#d6ff62]">Chunked direct transfer</div>
+                  <div className="mt-1 truncate text-xs text-white/75">{transfer.fileName}</div>
+                </div>
+                <div className="font-mono text-xs font-bold text-[#d6ff62]">{transfer.progressPercent}%</div>
+              </div>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full bg-[#d6ff62] transition-[width] duration-150" style={{ width: `${transfer.progressPercent}%` }} />
+              </div>
+              <div className="mt-2 flex justify-between gap-3 font-mono text-[10px] uppercase tracking-wider text-white/45">
+                <span>{formatBytes(transfer.transferredBytes)} / {formatBytes(transfer.fileSize)}</span>
+                <span>{transfer.encryptedChunksCount} / {transfer.totalChunks} chunks</span>
+              </div>
+            </div>
+          )}
 
           {/* Ephemeral Bundle / Files List */}
           <div className="bg-white/90 backdrop-blur-2xl border border-[#192837]/10 rounded-3xl p-5 flex-1 flex flex-col justify-between shadow-sm min-h-[320px]">

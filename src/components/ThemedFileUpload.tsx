@@ -33,7 +33,7 @@ function UploadIllustration({ progress, processing }: { progress: number; proces
   );
 }
 
-export function ThemedFileUpload({ onFiles, isProcessing = false, disabled = false, maxFileSize = 16 * 1024 * 1024, className = '' }: ThemedFileUploadProps) {
+export function ThemedFileUpload({ onFiles, isProcessing = false, disabled = false, maxFileSize = 500 * 1024 * 1024, className = '' }: ThemedFileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -86,7 +86,7 @@ export function ThemedFileUpload({ onFiles, isProcessing = false, disabled = fal
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(214,255,98,.12),transparent_55%)] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
         <UploadIllustration progress={progress} processing={isProcessing} />
         <div className="relative mt-3">
-          <div className="text-base font-medium tracking-[-.03em] text-white">{isDragging ? 'Release to add files' : isProcessing ? 'Preparing direct transfer…' : 'Drop files or browse'}</div>
+          <div className="text-base font-medium tracking-[-.03em] text-white">{isDragging ? 'Release to add files' : isProcessing ? 'Preparing chunked direct transfer…' : 'Drop files or browse'}</div>
           <div className="mt-2 font-mono text-[10px] uppercase tracking-[.16em] text-white/40">WebRTC DTLS · memory only · up to {formatBytes(maxFileSize)}</div>
         </div>
         <AnimatePresence mode="wait">

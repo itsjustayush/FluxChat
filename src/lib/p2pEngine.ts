@@ -9,6 +9,9 @@ export function getIceServerConfiguration(): RTCConfiguration {
 
 export const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB max single file
 export const MAX_BUNDLE_QUOTA = 2 * 1024 * 1024 * 1024; // 2 GB max RAM quota
+// Base64 expands each binary chunk by ~33%; 8 KB keeps the JSON packet safely
+// below conservative browser/SCTP max-message-size limits.
+export const RTC_DATA_CHANNEL_CHUNK_SIZE = 8 * 1024;
 
 export type WebRTCConnectionState =
   | 'new'
