@@ -1,4 +1,6 @@
-import React, { useState, useRef } from 'react';
+import { useRef, useState } from 'react';
+import type { ChangeEvent, CSSProperties, FormEvent, KeyboardEvent } from 'react';
+import { ArrowRight, Check, ClipboardPaste, KeyRound, LockKeyhole, Plus, Radio, ShieldCheck, Sparkles, Users } from 'lucide-react';
 import { ViewMode, UserSession } from '../types';
 
 interface DashboardScreenProps {
@@ -9,203 +11,106 @@ interface DashboardScreenProps {
   onUpdateNickname?: (newName: string) => void;
 }
 
-export const DashboardScreen: React.FC<DashboardScreenProps> = ({
-  session,
-  onCreateRoom,
-  onJoinRoom,
-  setView,
-  onUpdateNickname,
-}) => {
+const guarantees = [
+  'No account or contact list required',
+  'Room expires when the last peer leaves',
+  'Files remain in local memory until wiped',
+];
+
+export function DashboardScreen({ session, onCreateRoom, onJoinRoom, onUpdateNickname }: DashboardScreenProps) {
   const [otpValues, setOtpValues] = useState<string[]>(['', '', '', '', '', '']);
-  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [editingNick, setEditingNick] = useState(false);
   const [nickVal, setNickVal] = useState(session.identifier);
+  const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
 
-  const handleOtpChange = (index: number, value: string) => {
-    const val = value.toUpperCase();
-    if (val.length > 1) {
-      // If user pasted e.g. "XR92K8"
-      const pasted = val.slice(0, 6).split('');
-      const newOtp = [...otpValues];
-      pasted.forEach((char, i) => {
-        if (i < 6) newOtp[i] = char;
-      });
-      setOtpValues(newOtp);
-      const nextIndex = Math.min(pasted.length, 5);
-      inputRefs.current[nextIndex]?.focus();
+  const handleOtpChange = (index: number, event: ChangeEvent<HTMLInputElement>) => {
+    const incoming = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const next = [...otpValues];
+    if (incoming.length > 1) {
+      incoming.slice(0, 6).split('').forEach((char, offset) => { next[offset] = char; });
+      setOtpValues(next);
+      inputRefs.current[Math.min(incoming.length, 5)]?.focus();
       return;
     }
-
-    const newOtp = [...otpValues];
-    newOtp[index] = val;
-    setOtpValues(newOtp);
-
-    if (val && index < 5) {
-      inputRefs.current[index + 1]?.focus();
-    }
+    next[index] = incoming;
+    setOtpValues(next);
+    if (incoming && index < 5) inputRefs.current[index + 1]?.focus();
   };
 
-  const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace' && !otpValues[index] && index > 0) {
-      inputRefs.current[index - 1]?.focus();
-    }
+  const handleOtpKeyDown = (index: number, event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Backspace' && !otpValues[index] && index > 0) inputRefs.current[index - 1]?.focus();
+    if (event.key === 'ArrowLeft' && index > 0) inputRefs.current[index - 1]?.focus();
+    if (event.key === 'ArrowRight' && index < 5) inputRefs.current[index + 1]?.focus();
   };
 
-  const handleVerifyJoin = () => {
-    const code = otpValues.join('').replace(/-/g, '').trim();
-    if (code.length === 6) {
-      onJoinRoom(code);
-    } else {
-      alert('Please enter the full 6-character room code.');
-    }
+  const handleJoin = () => {
+    const code = otpValues.join('');
+    if (code.length === 6) onJoinRoom(code);
   };
 
-  const handleSaveNick = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (nickVal.trim() && onUpdateNickname) {
-      onUpdateNickname(nickVal.trim());
-    }
+  const handleSaveNick = (event: FormEvent) => {
+    event.preventDefault();
+    const cleanName = nickVal.trim().replace(/[^a-zA-Z0-9 _-]/g, '').slice(0, 18);
+    if (cleanName && onUpdateNickname) onUpdateNickname(cleanName);
     setEditingNick(false);
   };
 
   return (
-    <div className="min-h-screen flex flex-col pt-20 pb-20 px-4 md:px-12 selection:bg-[#7342E2] selection:text-white relative overflow-hidden bg-[#F2F2EE]">
-      {/* Hero Welcome Banner */}
-      <div className="w-full max-w-[1280px] mx-auto mt-4 mb-6">
-        <div className="bg-white/80 backdrop-blur-xl border border-[#192837]/10 rounded-3xl p-6 md:p-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 shadow-xs">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="inline-block w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse"></span>
-              <span className="font-mono text-xs font-bold text-[#7342E2] uppercase tracking-wider">
-                GUEST SESSION ACTIVE
-              </span>
-            </div>
-            <h1 className="text-2xl md:text-3xl font-heading font-bold text-[#192837] tracking-tight">
-              Welcome to UltronChat
-            </h1>
-            <p className="font-sans text-sm text-[#192837]/80 mt-1 max-w-xl">
-              Zero login, zero database history, 100% ephemeral P2P text messaging and direct file transfers.
-            </p>
+    <div className="page-reveal mx-auto w-full max-w-[1440px] px-5 pb-16 pt-10 sm:px-8 lg:px-12 lg:pt-16">
+      <section className="grid gap-10 lg:grid-cols-[1.15fr_.85fr] lg:items-end lg:gap-16">
+        <div className="max-w-3xl">
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#d6ff62]/20 bg-[#d6ff62]/[.08] px-3 py-2 font-mono text-[10px] uppercase tracking-[.2em] text-[#d6ff62]">
+            <Sparkles size={13} /> Private realtime rooms
           </div>
-
-          <div className="flex items-center gap-3 bg-[#7342E2]/5 border border-[#7342E2]/20 p-3.5 rounded-2xl w-full md:w-auto">
-            <span className="material-symbols-outlined text-[#7342E2] text-2xl">account_circle</span>
-            <div className="flex-1">
-              <div className="font-mono text-[10px] text-[#192837]/60 font-bold uppercase">YOUR GUEST IDENTITY</div>
-              {editingNick ? (
-                <form onSubmit={handleSaveNick} className="flex items-center gap-2 mt-0.5">
-                  <input
-                    type="text"
-                    value={nickVal}
-                    onChange={(e) => setNickVal(e.target.value)}
-                    className="font-mono text-xs font-bold bg-white border border-[#7342E2] rounded-md px-2 py-0.5 focus:outline-none"
-                    maxLength={20}
-                  />
-                  <button type="submit" className="text-xs bg-[#7342E2] text-white px-2 py-0.5 rounded font-mono font-bold">
-                    Save
-                  </button>
-                </form>
-              ) : (
-                <div className="font-mono text-xs font-bold text-[#192837] flex items-center gap-2">
-                  <span>{session.identifier}</span>
-                  <button
-                    onClick={() => {
-                      setNickVal(session.identifier);
-                      setEditingNick(true);
-                    }}
-                    className="text-[#7342E2] hover:underline text-[11px] cursor-pointer"
-                  >
-                    (change)
-                  </button>
-                </div>
-              )}
-            </div>
+          <h1 className="text-[clamp(3.25rem,8vw,7.8rem)] font-semibold leading-[.88] tracking-[-.085em] text-white">Move work<br /><em className="font-display font-normal not-italic text-white/45">without a trace.</em></h1>
+          <p className="mt-7 max-w-xl text-base leading-7 text-white/55 sm:text-lg">FluxChat gives teams a temporary place to talk and move files together. No profile graph, no archive, no friction between a room and the people in it.</p>
+          <div className="mt-8 flex flex-wrap items-center gap-4 font-mono text-[10px] uppercase tracking-[.16em] text-white/45">
+            <span className="inline-flex items-center gap-2"><Radio size={14} className="text-[#d6ff62]" /> Live transport</span>
+            <span className="inline-flex items-center gap-2"><LockKeyhole size={14} className="text-[#d6ff62]" /> Memory-first</span>
+            <span className="inline-flex items-center gap-2"><Users size={14} className="text-[#d6ff62]" /> Guest access</span>
           </div>
         </div>
-      </div>
 
-      {/* Main Action Panels */}
-      <main className="flex-grow flex items-center justify-center py-2 relative z-10">
-        <div className="w-full max-w-[1280px] grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
-          {/* Left Panel: CREATE CHAT ROOM */}
-          <div className="bg-white/80 backdrop-blur-2xl border border-[#192837]/10 rounded-3xl p-8 md:p-10 flex flex-col justify-between min-h-[380px] transition-all duration-300 hover:border-[#7342E2]/50 hover:shadow-xl group shadow-sm">
-            <div>
-              <span className="font-mono text-xs font-bold text-[#7342E2] mb-3 block tracking-widest uppercase">
-                INSTANT SESSION
-              </span>
-              <h2 className="text-2xl md:text-4xl font-heading font-bold text-[#192837] mb-4">
-                CREATE CHAT ROOM
-              </h2>
-              <p className="font-sans text-sm text-[#192837]/80 max-w-md mb-6 leading-relaxed">
-                Initialize a new ephemeral chat room. Invite peers using a 6-character code or shareable link. All messages live exclusively in browser RAM.
-              </p>
-              
-              <div className="space-y-2 mb-8 font-mono text-xs text-[#192837]/70">
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-emerald-600 text-base">check_circle</span>
-                  <span>Real-time instant text messaging</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-emerald-600 text-base">check_circle</span>
-                  <span>AES-256-GCM peer-to-peer file sharing</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-emerald-600 text-base">check_circle</span>
-                  <span>Zero server database logs or tracking</span>
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={onCreateRoom}
-              className="font-mono text-xs font-bold py-4 px-8 rounded-full w-full md:w-auto tracking-widest hover:scale-[1.02] active:scale-95 cursor-pointer flex items-center justify-center gap-2 text-white bg-[#7342E2] hover:bg-[#7342E2]/90 shadow-md transition-all"
-            >
-              <span className="material-symbols-outlined text-lg">add_comment</span>
-              CREATE EPHEMERAL CHAT
-            </button>
+        <div className="glass-panel relative overflow-hidden rounded-[2rem] p-5 sm:p-7">
+          <div className="absolute -right-20 -top-20 h-40 w-40 rounded-full bg-[#d6ff62]/10 blur-3xl" />
+          <div className="relative flex items-center justify-between border-b border-white/10 pb-5">
+            <div><p className="font-mono text-[10px] uppercase tracking-[.18em] text-white/40">Your session identity</p><p className="mt-2 text-xl font-medium tracking-[-.04em] text-white">{session.identifier}</p></div>
+            <button onClick={() => { setNickVal(session.identifier); setEditingNick((editing) => !editing); }} className="rounded-full border border-white/15 px-3 py-2 text-xs text-white/60 hover:border-white/35 hover:text-white">{editingNick ? 'Close' : 'Edit'}</button>
           </div>
-
-          {/* Right Panel: JOIN CHAT ROOM */}
-          <div className="bg-white/80 backdrop-blur-2xl border border-[#192837]/10 rounded-3xl p-8 md:p-10 flex flex-col justify-between min-h-[380px] transition-all duration-300 hover:border-[#7342E2]/50 hover:shadow-xl group shadow-sm">
-            <div>
-              <span className="font-mono text-xs font-bold text-[#7342E2] mb-3 block tracking-widest uppercase">
-                JOIN EXISTING ROOM
-              </span>
-              <h2 className="text-2xl md:text-4xl font-heading font-bold text-[#192837] mb-4">
-                JOIN WITH ROOM CODE
-              </h2>
-              <p className="font-sans text-sm text-[#192837]/80 max-w-md mb-6 leading-relaxed">
-                Enter the 6-character room code shared by the host to connect instantly as a guest peer.
-              </p>
-
-              {/* OTP Input Group */}
-              <div className="flex gap-2 sm:gap-3 mb-8 w-full justify-between sm:justify-start">
-                {otpValues.map((val, idx) => (
-                  <input
-                    key={idx}
-                    ref={(el) => (inputRefs.current[idx] = el)}
-                    type="text"
-                    maxLength={1}
-                    value={val}
-                    onChange={(e) => handleOtpChange(idx, e.target.value)}
-                    onKeyDown={(e) => handleKeyDown(idx, e)}
-                    placeholder="•"
-                    className="w-10 h-14 sm:w-12 sm:h-16 bg-white border border-[#192837]/20 rounded-2xl text-center font-mono text-xl text-[#7342E2] focus:border-[#7342E2] focus:bg-[#7342E2]/10 focus:shadow-[0_0_15px_rgba(115,66,226,0.2)] transition-all focus:outline-none font-bold"
-                  />
-                ))}
-              </div>
-            </div>
-
-            <button
-              onClick={handleVerifyJoin}
-              className="bg-white border border-[#192837]/20 text-[#192837] hover:bg-[#F2F2EE] hover:border-[#7342E2]/50 rounded-full font-mono text-xs font-bold py-4 px-8 w-full md:w-auto tracking-widest transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2 shadow-xs"
-            >
-              <span className="material-symbols-outlined text-lg">meeting_room</span>
-              ENTER CHAT ROOM
-            </button>
-          </div>
+          {editingNick && (
+            <form onSubmit={handleSaveNick} className="relative mt-4 flex gap-2">
+              <label htmlFor="dashboard-nickname" className="sr-only">Guest nickname</label>
+              <input id="dashboard-nickname" value={nickVal} onChange={(event) => setNickVal(event.target.value)} maxLength={18} className="min-w-0 flex-1 rounded-xl border border-white/15 bg-black/30 px-3 py-3 text-sm text-white outline-none focus:border-[#d6ff62]" />
+              <button type="submit" className="grid h-11 w-11 place-items-center rounded-xl bg-[#d6ff62] text-[#111]" aria-label="Save nickname"><Check size={17} /></button>
+            </form>
+          )}
+          <div className="relative mt-5 grid grid-cols-3 gap-2 text-center font-mono text-[9px] uppercase tracking-[.12em] text-white/40"><div className="rounded-xl bg-white/[.04] px-2 py-3"><span className="block text-white">RAM</span>storage</div><div className="rounded-xl bg-white/[.04] px-2 py-3"><span className="block text-white">P2P</span>preferred</div><div className="rounded-xl bg-white/[.04] px-2 py-3"><span className="block text-white">0</span>accounts</div></div>
         </div>
-      </main>
+      </section>
+
+      <section className="mt-14 grid gap-4 lg:grid-cols-2 lg:gap-5">
+        <article className="stagger-reveal group relative flex min-h-[360px] flex-col justify-between overflow-hidden rounded-[2rem] border border-[#d6ff62]/35 bg-[#d6ff62] p-6 text-[#111] shadow-[0_0_50px_rgba(214,255,98,.08)] sm:p-8" style={{ '--delay': '120ms' } as CSSProperties}>
+          <div className="absolute -bottom-24 -right-16 h-64 w-64 rounded-full border-[32px] border-black/[.06] transition-transform duration-500 group-hover:scale-110" />
+          <div className="relative"><div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[.18em] opacity-55"><span>01 / Create</span><Plus size={18} /></div><h2 className="mt-12 max-w-sm text-4xl font-semibold leading-[.92] tracking-[-.07em] sm:text-5xl">Start a room<br /><em className="font-display font-normal not-italic">in seconds.</em></h2><p className="mt-5 max-w-sm text-sm leading-6 text-black/65">Generate a short-lived room and bring people in with a code or link. The host controls the room’s first connection.</p></div>
+          <button onClick={onCreateRoom} className="relative mt-8 inline-flex w-full items-center justify-between rounded-full bg-[#111] px-5 py-4 text-sm font-medium text-white transition-transform duration-200 hover:scale-[1.015] active:scale-[.98]">Create private room <ArrowRight size={18} /></button>
+        </article>
+
+        <article className="stagger-reveal glass-panel group flex min-h-[360px] flex-col justify-between rounded-[2rem] p-6 sm:p-8" style={{ '--delay': '200ms' } as CSSProperties}>
+          <div><div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[.18em] text-white/40"><span>02 / Join</span><KeyRound size={18} className="text-[#d6ff62]" /></div><h2 className="mt-12 max-w-sm text-4xl font-semibold leading-[.92] tracking-[-.07em] text-white sm:text-5xl">Enter the<br /><em className="font-display font-normal not-italic text-white/45">room code.</em></h2><p className="mt-5 max-w-sm text-sm leading-6 text-white/50">Use the six-character code from your host. The code is only an invitation, not a password or a permanent identity.</p></div>
+          <div className="mt-8">
+            <div className="flex gap-2 sm:gap-3" role="group" aria-label="Six-character room code">
+              {otpValues.map((value, index) => <input key={index} ref={(element) => { inputRefs.current[index] = element; }} value={value} onChange={(event) => handleOtpChange(index, event)} onKeyDown={(event) => handleOtpKeyDown(index, event)} aria-label={`Room code character ${index + 1}`} inputMode="text" autoComplete="one-time-code" maxLength={1} className="h-14 min-w-0 flex-1 rounded-xl border border-white/15 bg-black/25 text-center font-mono text-xl text-white outline-none transition-all focus:border-[#d6ff62] focus:bg-[#d6ff62]/10" />)}
+            </div>
+            <button onClick={handleJoin} disabled={otpValues.join('').length !== 6} className="liquid-button liquid-button--solid mt-4 w-full disabled:cursor-not-allowed disabled:opacity-35"><ClipboardPaste size={16} /> Enter room <ArrowRight size={16} /></button>
+          </div>
+        </article>
+      </section>
+
+      <section className="mt-8 grid gap-3 border-t border-white/10 pt-7 sm:grid-cols-3">
+        {guarantees.map((guarantee, index) => <div key={guarantee} className="stagger-reveal flex items-start gap-3 text-sm text-white/50" style={{ '--delay': `${280 + index * 70}ms` } as CSSProperties}><span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[#d6ff62]/35 text-[#d6ff62]"><Check size={11} /></span>{guarantee}</div>)}
+      </section>
+
+      <div className="mt-8 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.18em] text-white/30"><ShieldCheck size={14} className="text-[#d6ff62]" /> We do not retain room content. Signaling remains transient while peers are online.</div>
     </div>
   );
-};
+}

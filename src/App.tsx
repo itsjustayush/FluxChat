@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { ShieldCheck } from 'lucide-react';
 import { ViewMode, UserSession, RoomState, BundleItem } from './types';
 import { Navbar } from './components/Navbar';
 import { DashboardScreen } from './components/DashboardScreen';
@@ -9,205 +10,82 @@ import { HistoryScreen } from './components/HistoryScreen';
 import { generateRoomOTP } from './lib/p2pEngine';
 import { getOrCreateGuestSession, updateGuestNickname } from './lib/session';
 
+const createInitialRoom = (session: UserSession, roomId = 'X-R92-K', hostId = session.id): RoomState => ({
+  id: roomId,
+  createdAt: Date.now(),
+  hostId,
+  activePeers: [{ id: session.id, name: session.identifier, isYou: true, status: 'ONLINE', latencyMs: 0, ip: 'P2P_DIRECT' }],
+  bundleItems: [],
+  messages: [],
+  selectedTargetPeerId: 'ALL_BUNDLE',
+});
+
 export default function App() {
   const [session, setSession] = useState<UserSession>(() => getOrCreateGuestSession());
   const [currentView, setCurrentView] = useState<ViewMode>('DASHBOARD');
-  const [latencyMs, setLatencyMs] = useState(12);
-
-  // Active Room State
-  const [room, setRoom] = useState<RoomState>({
-    id: 'X-R92-K',
-    createdAt: Date.now(),
-    hostId: session.id,
-    activePeers: [
-      { id: session.id, name: session.identifier, isYou: true, status: 'ONLINE', latencyMs: 0, ip: '127.0.0.1' },
-    ],
-    bundleItems: [],
-    messages: [],
-    selectedTargetPeerId: 'ALL_BUNDLE',
-  });
-
-  // Modal State
+  const [latencyMs] = useState(12);
+  const [room, setRoom] = useState<RoomState>(() => createInitialRoom(session));
   const [previewFile, setPreviewFile] = useState<BundleItem | null>(null);
 
-  // Check URL deep-links on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
-
-    if (roomParam) {
-      const cleanRoom = roomParam.toUpperCase().replace(/[^A-Z0-9]/g, '');
-      setRoom((prev) => ({
-        ...prev,
-        id: cleanRoom,
-        hostId: 'HOST_NODE',
-        activePeers: [
-          { id: session.id, name: session.identifier, isYou: true, status: 'ONLINE', latencyMs: 0, ip: '127.0.0.1' },
-        ],
-      }));
-      setCurrentView('ROOM');
-    }
-  }, [session.id, session.identifier]);
+    if (!roomParam) return;
+    const cleanRoom = roomParam.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+    if (cleanRoom.length < 3) return;
+    setRoom(createInitialRoom(session, cleanRoom, 'HOST_NODE'));
+    setCurrentView('ROOM');
+  }, [session]);
 
   const handleUpdateNickname = (newName: string) => {
     const updated = updateGuestNickname(newName);
     setSession(updated);
-    // Update local peer name in room state
-    setRoom((prev) => ({
-      ...prev,
-      activePeers: prev.activePeers.map((p) => (p.isYou ? { ...p, name: updated.identifier } : p)),
-    }));
+    setRoom((prev) => ({ ...prev, activePeers: prev.activePeers.map((peer) => peer.isYou ? { ...peer, name: updated.identifier } : peer) }));
   };
 
   const handleCreateRoom = () => {
     const newOtp = generateRoomOTP();
-    setRoom({
-      id: newOtp,
-      createdAt: Date.now(),
-      hostId: session.id,
-      activePeers: [
-        { id: session.id, name: session.identifier, isYou: true, status: 'ONLINE', latencyMs: 0, ip: '127.0.0.1' },
-      ],
-      bundleItems: [],
-      messages: [
-        {
-          id: `sys-${Date.now()}`,
-          senderId: 'SYSTEM',
-          senderName: 'ULTRON SYSTEM',
-          text: `Ephemeral encrypted chat room ${newOtp} created. Sharing is zero-cloud and strictly peer-to-peer.`,
-          timestamp: Date.now(),
-          type: 'system',
-        },
-      ],
-      selectedTargetPeerId: 'ALL_BUNDLE',
-    });
+    setRoom({ ...createInitialRoom(session, newOtp), messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'FLUX SYSTEM', text: `Private room ${newOtp} created. Content is kept in memory for this session.`, timestamp: Date.now(), type: 'system' }] });
     setCurrentView('ROOM');
   };
 
   const handleJoinRoom = (otpCode: string) => {
-    const cleanOtp = otpCode.replace(/-/g, '').toUpperCase();
-    setRoom({
-      id: cleanOtp,
-      createdAt: Date.now(),
-      hostId: 'HOST_NODE',
-      activePeers: [
-        { id: session.id, name: session.identifier, isYou: true, status: 'ONLINE', latencyMs: 0, ip: '127.0.0.1' },
-      ],
-      bundleItems: [],
-      messages: [
-        {
-          id: `sys-${Date.now()}`,
-          senderId: 'SYSTEM',
-          senderName: 'ULTRON SYSTEM',
-          text: `Joined ephemeral room ${cleanOtp}. All text messages and file transfers are peer-to-peer and zero-storage.`,
-          timestamp: Date.now(),
-          type: 'system',
-        },
-      ],
-      selectedTargetPeerId: 'ALL_BUNDLE',
-    });
+    const cleanOtp = otpCode.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 12);
+    if (cleanOtp.length !== 6) return;
+    setRoom({ ...createInitialRoom(session, cleanOtp, 'HOST_NODE'), messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'FLUX SYSTEM', text: `Joined room ${cleanOtp}. Signaling is transient; room content is not archived.`, timestamp: Date.now(), type: 'system' }] });
     setCurrentView('ROOM');
   };
 
-  const handleAddBundleItem = (item: BundleItem) => {
-    setRoom((prev) => ({
-      ...prev,
-      bundleItems: [item, ...prev.bundleItems],
-    }));
-  };
+  const handleAddBundleItem = (item: BundleItem) => setRoom((prev) => ({ ...prev, bundleItems: [item, ...prev.bundleItems] }));
 
   const handleDownloadFile = (file: BundleItem) => {
     if (!file.blobUrl) return;
-    const a = document.createElement('a');
-    a.href = file.blobUrl;
-    a.download = file.name;
-    a.click();
+    const anchor = document.createElement('a');
+    anchor.href = file.blobUrl;
+    anchor.download = file.name;
+    anchor.rel = 'noreferrer';
+    anchor.click();
   };
 
   const handleWipeSession = () => {
-    if (window.confirm('Clear all ephemeral chat messages and RAM files for this session?')) {
-      setRoom((prev) => ({
-        ...prev,
-        bundleItems: [],
-        messages: [
-          {
-            id: `sys-${Date.now()}`,
-            senderId: 'SYSTEM',
-            senderName: 'ULTRON SYSTEM',
-            text: 'Ephemeral session cache wiped successfully.',
-            timestamp: Date.now(),
-            type: 'system',
-          },
-        ],
-      }));
-    }
+    if (!window.confirm('Wipe this tab’s in-memory files and messages? This cannot be undone.')) return;
+    setRoom((prev) => ({ ...prev, bundleItems: [], messages: [{ id: `sys-${Date.now()}`, senderId: 'SYSTEM', senderName: 'FLUX SYSTEM', text: 'Local session memory wiped.', timestamp: Date.now(), type: 'system' }] }));
   };
 
   return (
-    <div className="bg-[#F2F2EE] text-[#192837] min-h-screen font-sans selection:bg-[#7342E2] selection:text-white relative overflow-x-hidden flex flex-col">
-      {/* Top Navbar */}
-      <Navbar
-        currentView={currentView}
-        setView={setCurrentView}
-        session={session}
-        onUpdateNickname={handleUpdateNickname}
-        latencyMs={latencyMs}
-      />
-
-      {/* Main Views */}
-      <main className="flex-1">
-        {currentView === 'DASHBOARD' || currentView === 'AUTH' ? (
-          <DashboardScreen
-            session={session}
-            onCreateRoom={handleCreateRoom}
-            onJoinRoom={handleJoinRoom}
-            setView={setCurrentView}
-            onUpdateNickname={handleUpdateNickname}
-          />
-        ) : null}
-
-        {currentView === 'ROOM' && (
-          <RoomView
-            room={room}
-            session={session}
-            onLeaveRoom={() => setCurrentView('DASHBOARD')}
-            onPreviewFile={(file) => setPreviewFile(file)}
-            onAddBundleItem={handleAddBundleItem}
-          />
-        )}
-
+    <div className="app-shell">
+      <div className="noise-overlay" aria-hidden="true" />
+      <Navbar currentView={currentView} setView={setCurrentView} session={session} onUpdateNickname={handleUpdateNickname} latencyMs={latencyMs} />
+      <main className="relative z-10 min-h-[calc(100vh-76px)]">
+        {currentView === 'DASHBOARD' || currentView === 'AUTH' ? <DashboardScreen session={session} onCreateRoom={handleCreateRoom} onJoinRoom={handleJoinRoom} setView={setCurrentView} onUpdateNickname={handleUpdateNickname} /> : null}
+        {currentView === 'ROOM' && <RoomView room={room} session={session} onLeaveRoom={() => setCurrentView('DASHBOARD')} onPreviewFile={setPreviewFile} onAddBundleItem={handleAddBundleItem} />}
         {currentView === 'NETWORK' && <NetworkTopologyScreen room={room} />}
-
-        {currentView === 'HISTORY' && (
-          <HistoryScreen
-            bundleItems={room.bundleItems}
-            onWipeSession={handleWipeSession}
-          />
-        )}
+        {currentView === 'HISTORY' && <HistoryScreen bundleItems={room.bundleItems} onWipeSession={handleWipeSession} />}
       </main>
-
-      {/* File Preview Modal */}
-      {previewFile && (
-        <FilePreviewModal
-          file={previewFile}
-          onClose={() => setPreviewFile(null)}
-          onDownload={handleDownloadFile}
-        />
-      )}
-
-      {/* Footer */}
-      <footer className="w-full py-6 text-center text-xs text-[#192837]/70 font-mono border-t border-[#192837]/10 mt-auto bg-white/40 flex flex-col sm:flex-row items-center justify-center gap-2">
-        <span>UltronChat • Built by</span>
-        <a
-          href="https://github.com/itsjustayush"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-[#7342E2] font-bold hover:underline flex items-center gap-1"
-        >
-          <span>Ayush Bhattacharya</span>
-          <span className="material-symbols-outlined text-sm">open_in_new</span>
-        </a>
-        <span className="hidden sm:inline">• Ephemeral P2P Messaging & File Share</span>
+      {previewFile && <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} onDownload={handleDownloadFile} />}
+      <footer className="relative z-10 mx-auto flex w-full max-w-[1440px] items-center justify-between gap-4 border-t border-white/10 px-5 py-6 font-mono text-[10px] uppercase tracking-[.16em] text-white/35 sm:px-8 lg:px-12">
+        <span>FluxChat / ephemeral collaboration</span>
+        <span className="inline-flex items-center gap-2"><ShieldCheck size={13} className="text-[#d6ff62]" /> No room archive</span>
       </footer>
     </div>
   );

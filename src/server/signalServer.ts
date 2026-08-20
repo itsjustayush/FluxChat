@@ -36,6 +36,28 @@ export interface RoomState {
   lastActivity: number;
 }
 
+const MAX_SIGNAL_BYTES = 64 * 1024;
+const MAX_QUEUE_MESSAGES = 100;
+const ROOM_ID_PATTERN = /^[A-Za-z0-9_-]{3,32}$/;
+const PEER_ID_PATTERN = /^[A-Za-z0-9_-]{3,80}$/;
+
+function normalizeChannel(roomId?: string): string | null {
+  if (!roomId || !ROOM_ID_PATTERN.test(roomId)) return null;
+  return roomId.startsWith('room-') ? roomId.toUpperCase() : `room-${roomId.toUpperCase()}`;
+}
+
+function isSafeMessage(message: SignalMessage): boolean {
+  if (!message || typeof message.type !== 'string') return false;
+  if (message.roomId && !normalizeChannel(message.roomId)) return false;
+  if (message.peerId && !PEER_ID_PATTERN.test(message.peerId)) return false;
+  if (message.targetPeerId && !PEER_ID_PATTERN.test(message.targetPeerId)) return false;
+  try {
+    return JSON.stringify(message).length <= MAX_SIGNAL_BYTES;
+  } catch {
+    return false;
+  }
+}
+
 export class SignalingServer {
   private app: express.Application;
   private httpServer: ReturnType<typeof createServer>;
@@ -135,7 +157,16 @@ export class SignalingServer {
         res.status(400).json({ error: 'Missing roomId or peerId' });
         return;
       }
-      const channelId = roomId.startsWith('room-') ? roomId.toUpperCase() : `room-${roomId.toUpperCase()}`;
+      const channelId = normalizeChannel(roomId);
+      if (!channelId || !PEER_ID_PATTERN.test(peerId)) {
+        res.status(400).json({ error: 'Invalid room or peer identity' });
+        return;
+      }
+      const room = this.rooms.get(channelId);
+      if (!room || !room.peers.has(peerId)) {
+        res.status(403).json({ error: 'Peer is not joined to this room' });
+        return;
+      }
       const key = `${channelId}:${peerId}`;
       const queue = this.httpPeerQueues.get(key) || [];
       this.httpPeerQueues.set(key, []);
@@ -144,14 +175,17 @@ export class SignalingServer {
   }
 
   private handleHttpSignalMessage(message: SignalMessage) {
+    if (!isSafeMessage(message)) return;
     if (message.type === 'join') {
       this.handleJoin(null, message);
     } else if (['offer', 'answer', 'candidate', 'chat', 'chat_ack', 'typing', 'reaction'].includes(message.type)) {
       if (message.targetPeerId) {
         this.relayMessage(null, message);
-      } else if (message.roomId) {
-        const channelId = message.roomId.startsWith('room-') ? message.roomId.toUpperCase() : `room-${message.roomId.toUpperCase()}`;
-        this.broadcastToRoom(channelId, message, message.peerId);
+      } else if (message.roomId && message.peerId) {
+        const channelId = normalizeChannel(message.roomId);
+        const room = channelId ? this.rooms.get(channelId) : undefined;
+        if (!room || !room.peers.has(message.peerId)) return;
+        this.broadcastToRoom(channelId!, message, message.peerId);
       }
     }
   }
@@ -163,7 +197,7 @@ export class SignalingServer {
       ws.on('message', (data: Buffer) => {
         try {
           const message: SignalMessage = JSON.parse(data.toString());
-          this.handleMessage(ws, message);
+            this.handleMessage(ws, message);
         } catch (error) {
           console.error('[SignalingServer] Error parsing message:', error);
           this.sendError(ws, 'Invalid message format');
@@ -183,6 +217,18 @@ export class SignalingServer {
   }
 
   private handleMessage(ws: WebSocket, message: SignalMessage) {
+    if (!isSafeMessage(message)) {
+      this.sendError(ws, 'Invalid or oversized signaling payload');
+      return;
+    }
+    if (message.type !== 'join' && message.type !== 'ping' && !this.peerToRoom.has(ws)) {
+      this.sendError(ws, 'Join a room before sending data');
+      return;
+    }
+    const peerInfo = this.peerToRoom.get(ws);
+    if (peerInfo && message.type !== 'join' && message.type !== 'ping') {
+      message = { ...message, roomId: peerInfo.roomId, peerId: peerInfo.peerId };
+    }
     switch (message.type) {
       case 'join':
         this.handleJoin(ws, message);
@@ -203,8 +249,8 @@ export class SignalingServer {
         if (message.targetPeerId) {
           this.relayMessage(ws, message);
         } else if (message.roomId) {
-          const channelId = message.roomId.startsWith('room-') ? message.roomId.toUpperCase() : `room-${message.roomId.toUpperCase()}`;
-          this.broadcastToRoom(channelId, message, message.peerId);
+          const channelId = normalizeChannel(message.roomId);
+          if (channelId) this.broadcastToRoom(channelId, message, message.peerId);
         }
         break;
       case 'ping':
@@ -226,7 +272,11 @@ export class SignalingServer {
     }
 
     // Standardized room channel string e.g. room-XR92KB
-    const channelId = roomId.startsWith('room-') ? roomId.toUpperCase() : `room-${roomId.toUpperCase()}`;
+    const channelId = normalizeChannel(roomId);
+    if (!channelId) {
+      if (ws) this.sendError(ws, 'Invalid room code');
+      return;
+    }
 
     // Get or create room
     let room = this.rooms.get(channelId);
@@ -252,6 +302,10 @@ export class SignalingServer {
     }
 
     // Add or update peer
+    if (room.peers.has(peerId) && room.peers.get(peerId) !== ws) {
+      if (ws) this.sendError(ws, 'Peer identity is already active in this room');
+      return;
+    }
     room.peers.set(peerId, ws);
     if (ws) {
       this.peerToRoom.set(ws, { roomId: channelId, peerId });
@@ -307,7 +361,11 @@ export class SignalingServer {
       return;
     }
 
-    const channelId = roomId.startsWith('room-') ? roomId.toUpperCase() : `room-${roomId.toUpperCase()}`;
+    const channelId = normalizeChannel(roomId);
+    if (!channelId) {
+      if (ws) this.sendError(ws, 'Invalid room code');
+      return;
+    }
     const { targetPeerId } = message;
 
     if (!targetPeerId) {
@@ -316,8 +374,8 @@ export class SignalingServer {
     }
 
     const room = this.rooms.get(channelId);
-    if (!room) {
-      if (ws) this.sendError(ws, 'Room not found');
+    if (!room || !room.peers.has(peerId)) {
+      if (ws) this.sendError(ws, 'Peer is not joined to this room');
       return;
     }
 
@@ -362,6 +420,7 @@ export class SignalingServer {
         queue = [];
         this.httpPeerQueues.set(key, queue);
       }
+      if (queue.length >= MAX_QUEUE_MESSAGES) queue.shift();
       queue.push(message);
     }
   }

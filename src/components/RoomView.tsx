@@ -1,11 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import crc32 from 'js-crc32';
-import { collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import { RoomState, BundleItem, TransferProgress, SystemLogEntry, Peer, ChatMessage, UserSession } from '../types';
 import { useSignaling } from '../hooks/useSignaling';
 import {
-  encryptFileBuffer,
+  calculateSHA256,
   formatBytes,
   calculateCarbonMetrics,
   getFileTypeLabel,
@@ -102,7 +100,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
       id: 'welcome-1',
       senderId: 'SYSTEM',
       senderName: 'ULTRON SYSTEM',
-      text: `Ephemeral encrypted room ${room.id} active. Zero database storage — all messages and files disappear when room closes.`,
+      text: `Private room ${room.id} active. Content stays in memory and disappears when the room closes.`,
       timestamp: Date.now(),
       type: 'system',
     },
@@ -205,14 +203,6 @@ export const RoomView: React.FC<RoomViewProps> = ({
             // ignore
           }
         }
-
-        // Sync reaction to Firestore message doc
-        const cleanRoom = room.id.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-        setDoc(
-          doc(db, 'rooms', cleanRoom, 'messages', messageId),
-          { reactions },
-          { merge: true }
-        ).catch(() => {});
 
         return { ...msg, reactions };
       })
@@ -414,106 +404,8 @@ export const RoomView: React.FC<RoomViewProps> = ({
     },
   });
 
-  // Sync chat messages from Firestore real-time channel
-  useEffect(() => {
-    if (!room.id) return;
-    const cleanRoom = room.id.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    const msgsCollRef = collection(db, 'rooms', cleanRoom, 'messages');
-
-    const unsub = onSnapshot(
-      msgsCollRef,
-      (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          if (change.type === 'added' || change.type === 'modified') {
-            const data = change.doc.data() as ChatMessage;
-            if (!data || !data.id) return;
-            setChatMessages((prev) => {
-              const idx = prev.findIndex((m) => m.id === data.id);
-              if (idx >= 0) {
-                const copy = [...prev];
-                copy[idx] = { ...copy[idx], ...data };
-                return copy;
-              }
-              return [...prev, data];
-            });
-
-            // Mark read in Firestore if from another peer
-            if (change.type === 'added' && data.senderId && data.senderId !== localPeerId && data.type !== 'system') {
-              if (data.status !== 'read') {
-                setDoc(doc(db, 'rooms', cleanRoom, 'messages', data.id), { status: 'read' }, { merge: true }).catch(() => {});
-              }
-            }
-          }
-        });
-      },
-      (error) => {
-        console.warn('Firestore msgs onSnapshot error:', error);
-      }
-    );
-
-    return () => unsub();
-  }, [room.id]);
-
-  // Sync files from Firestore real-time channel
-  useEffect(() => {
-    if (!room.id) return;
-    const cleanRoom = room.id.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    const bundleCollRef = collection(db, 'rooms', cleanRoom, 'bundleItems');
-
-    const unsub = onSnapshot(
-      bundleCollRef,
-      (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          if (change.type === 'added') {
-            const data = change.doc.data();
-            if (!data || !data.id) return;
-
-            const exists = bundleItemsRef.current.some((item) => item.id === data.id);
-            if (exists) return;
-
-            let rawBlob: Blob | undefined;
-            let blobUrl: string | undefined;
-
-            if (data.dataUrl) {
-              rawBlob = dataUrlToBlob(data.dataUrl);
-              blobUrl = URL.createObjectURL(rawBlob);
-            } else if (data.textContent) {
-              rawBlob = new Blob([data.textContent], { type: data.type || 'text/plain' });
-              blobUrl = URL.createObjectURL(rawBlob);
-            }
-
-            const newItem: BundleItem = {
-              id: data.id,
-              name: data.name,
-              size: data.size,
-              type: data.type,
-              fileTypeLabel: data.fileTypeLabel,
-              fileId: data.fileId,
-              dimensions: data.dimensions,
-              sha256: data.sha256,
-              encryptedHash: data.encryptedHash,
-              blobUrl,
-              rawBlob,
-              textContent: data.textContent,
-              uploaderId: data.uploaderId,
-              uploaderName: data.uploaderName,
-              timestamp: data.timestamp,
-              carbonFootprintGrams: data.carbonFootprintGrams,
-              peerSeeds: data.peerSeeds || 1,
-              encryptionStatus: 'AES-256-GCM VERIFIED',
-            };
-
-            onAddBundleItem(newItem);
-          }
-        });
-      },
-      (error) => {
-        console.warn('Firestore bundleItems onSnapshot error:', error);
-      }
-    );
-
-    return () => unsub();
-  }, [room.id]);
+  // Chat and file payloads intentionally stay off Firestore. The server only relays
+  // transient signaling; room content is kept in this tab or sent over WebRTC.
 
   // WebRTC DataChannel initialization
   useEffect(() => {
@@ -588,7 +480,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                 timestamp: dataItem.timestamp,
                 carbonFootprintGrams: dataItem.carbonFootprintGrams,
                 peerSeeds: dataItem.peerSeeds || 1,
-                encryptionStatus: 'AES-256-GCM VERIFIED',
+                encryptionStatus: 'WEBRTC DTLS TRANSPORT',
               };
 
               onAddBundleItem(receivedItem);
@@ -717,13 +609,6 @@ export const RoomView: React.FC<RoomViewProps> = ({
       }
     }
 
-    // 3. Write to Firestore real-time channel
-    try {
-      const cleanRoom = room.id.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-      await setDoc(doc(db, 'rooms', cleanRoom, 'messages', chatMsg.id), chatMsg);
-    } catch (err) {
-      // ignore
-    }
   };
 
   // Copy Share Link
@@ -752,7 +637,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
     try {
       const fileBuffer = await file.arrayBuffer();
-      const encrypted = await encryptFileBuffer(fileBuffer);
+      const sha256Hex = await calculateSHA256(fileBuffer);
       const dataUrl = await arrayBufferToDataUrl(fileBuffer, fileType);
       const rawBlob = new Blob([fileBuffer], { type: fileType });
       const blobUrl = URL.createObjectURL(rawBlob);
@@ -765,8 +650,8 @@ export const RoomView: React.FC<RoomViewProps> = ({
         fileTypeLabel: getFileTypeLabel(fileName, fileType),
         fileId: `FLX-${Math.floor(1000 + Math.random() * 9000)}-${fileName.substring(0, 4).toUpperCase()}`,
         dimensions: `${(fileSize / 1024).toFixed(1)} KB`,
-        sha256: encrypted.sha256Hex,
-        encryptedHash: encrypted.sha256Hex,
+        sha256: sha256Hex,
+        encryptedHash: 'WEBRTC-DTLS',
         blobUrl,
         rawBlob,
         uploaderId: localPeerId,
@@ -798,25 +683,35 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
       setChatMessages((prev) => [...prev, fileChatNotice]);
 
-      // Broadcast file metadata & chat message to room
-      const cleanRoom = room.id.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-      await setDoc(doc(db, 'rooms', cleanRoom, 'bundleItems', newItem.id), {
-        id: newItem.id,
-        name: newItem.name,
-        size: newItem.size,
-        type: newItem.type,
-        fileTypeLabel: newItem.fileTypeLabel,
-        fileId: newItem.fileId,
-        sha256: newItem.sha256,
-        encryptedHash: newItem.encryptedHash,
-        uploaderId: newItem.uploaderId,
-        uploaderName: newItem.uploaderName,
-        timestamp: newItem.timestamp,
-        carbonFootprintGrams: newItem.carbonFootprintGrams,
-        dataUrl,
-      });
-
-      await setDoc(doc(db, 'rooms', cleanRoom, 'messages', fileChatNotice.id), fileChatNotice);
+      // Share only over the active WebRTC channel. No file bytes or metadata are
+      // written to a cloud collection; if a direct channel is unavailable we fail
+      // closed instead of silently falling back to persistent storage.
+      if (peerEngineRef.current?.dataChannel?.readyState !== 'open') {
+        addErrorToast('ERR_DIRECT_CHANNEL', 'Direct peer link is not ready. Connect to a peer before sharing files.');
+        return;
+      }
+      if (fileSize > 16 * 1024 * 1024) {
+        addErrorToast('ERR_FILE_SIZE', 'Files above 16 MB require the chunked transfer channel and were not sent.');
+        return;
+      }
+      peerEngineRef.current.dataChannel.send(JSON.stringify({
+        type: 'BUNDLE_ITEM_SHARE',
+        item: {
+          id: newItem.id,
+          name: newItem.name,
+          size: newItem.size,
+          type: newItem.type,
+          fileTypeLabel: newItem.fileTypeLabel,
+          fileId: newItem.fileId,
+          sha256: newItem.sha256,
+          encryptedHash: newItem.encryptedHash,
+          uploaderId: newItem.uploaderId,
+          uploaderName: newItem.uploaderName,
+          timestamp: newItem.timestamp,
+          carbonFootprintGrams: newItem.carbonFootprintGrams,
+          dataUrl,
+        },
+      }));
     } catch (err: any) {
       addErrorToast('ERR_ENCRYPT_FAIL', err?.message || 'Failed to encrypt file.');
     }
@@ -850,7 +745,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className="min-h-screen pt-16 pb-12 px-3 sm:px-8 bg-[#F2F2EE] flex flex-col"
+      className="room-shell min-h-screen pt-16 pb-12 px-3 sm:px-8 bg-[#F2F2EE] flex flex-col"
     >
       {/* Top Header Bar */}
       <div className="w-full max-w-[1280px] mx-auto mt-2 mb-4">
@@ -933,7 +828,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
         <div className="fixed inset-0 z-50 bg-[#7342E2]/80 backdrop-blur-md flex flex-col items-center justify-center text-white border-4 border-dashed border-white m-4 rounded-3xl pointer-events-none">
           <span className="material-symbols-outlined text-6xl mb-2 animate-bounce">upload_file</span>
           <div className="font-heading text-2xl font-bold">Drop files to share in room</div>
-          <div className="font-mono text-xs opacity-90 mt-1">AES-256-GCM Ephemeral Encryption Active</div>
+          <div className="font-mono text-xs opacity-90 mt-1">Direct peer transfer • memory only</div>
         </div>
       )}
 
@@ -950,7 +845,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
             </div>
             <div className="flex items-center gap-1.5 font-mono text-[11px] text-[#7342E2] bg-[#7342E2]/10 px-2.5 py-1 rounded-full font-bold">
               <span className="material-symbols-outlined text-sm">lock</span>
-              <span>ZERO DATABASE LOGS</span>
+              <span>NO ROOM ARCHIVE</span>
             </div>
           </div>
 
@@ -1230,7 +1125,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
               DROP OR CLICK TO SHARE FILES
             </div>
             <div className="font-mono text-xs text-[#192837]/60 mt-0.5">
-              AES-256-GCM Encrypted • Direct P2P Streaming
+              WEBRTC DTLS • DIRECT P2P
             </div>
           </div>
 
@@ -1296,7 +1191,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
             {/* Room Footer Status */}
             <div className="pt-3 border-t border-[#192837]/10 flex justify-between items-center font-mono text-[11px] text-[#192837]/60">
-              <span>ENCRYPTION: AES-256-GCM</span>
+              <span>TRANSPORT: WEBRTC DTLS</span>
               <span className="text-emerald-600 font-bold">READY</span>
             </div>
           </div>

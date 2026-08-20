@@ -13,16 +13,6 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
   onClose,
   onDownload,
 }) => {
-  const [copiedLink, setCopiedLink] = useState(false);
-
-  const handleCopyLink = () => {
-    const link = `${window.location.origin}?file=${encodeURIComponent(file.fileId)}`;
-    navigator.clipboard.writeText(link).then(() => {
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 1500);
-    });
-  };
-
   const isImage =
     file.type.startsWith('image/') ||
     ['PNG', 'JPG', 'JPEG', 'WEBP', 'SVG'].some((ext) =>
@@ -124,7 +114,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                     {file.textContent || `{
   "node_id": "${file.fileId}",
   "file_name": "${file.name}",
-  "encryption": "AES-256-GCM",
+  "transport": "WEBRTC-DTLS",
   "sha256": "${file.sha256}",
   "size_bytes": ${file.size},
   "carbon_footprint_gCO2e": ${file.carbonFootprintGrams},
@@ -142,7 +132,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                     BRUTALIST_BLOB // {formatBytes(file.size)}
                   </p>
                   <span className="px-3 py-1 bg-blue-500/10 border border-blue-400/40 text-blue-400 font-mono text-xs rounded-full">
-                    ENCRYPTED_BINARY_PAYLOAD
+                    MEMORY_ONLY_PAYLOAD
                   </span>
                 </div>
               )}
@@ -227,13 +217,6 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
               DOWNLOAD
             </button>
 
-            <button
-              onClick={handleCopyLink}
-              className="bg-white/5 border border-white/20 text-white px-6 py-3.5 rounded-xl font-mono text-xs font-bold hover:bg-white/10 transition-all flex items-center justify-center gap-2 flex-1 sm:flex-initial cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-lg">share</span>
-              {copiedLink ? 'LINK_COPIED' : 'COPY_LINK'}
-            </button>
           </div>
 
           <button

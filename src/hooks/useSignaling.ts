@@ -5,17 +5,6 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { SignalMessage } from '../server/signalServer';
-import {
-  collection,
-  doc,
-  setDoc,
-  deleteDoc,
-  onSnapshot,
-  query,
-  where,
-  addDoc,
-} from 'firebase/firestore';
-import { db } from '../lib/firebase';
 
 export interface UseSignalingOptions {
   signalingUrl: string;
@@ -111,39 +100,10 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
   }, []);
 
   /**
-   * Send signal via Firestore real-time collection
-   */
-  const sendFirestoreSignal = useCallback(
-    (targetPeerId: string, type: 'offer' | 'answer' | 'candidate', payload: any) => {
-      if (!roomId || !peerId || !targetPeerId) return;
-      const cleanRoom = roomId.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-      
-      let plainPayload = payload;
-      if (payload && typeof payload === 'object') {
-        if (typeof payload.toJSON === 'function') {
-          plainPayload = payload.toJSON();
-        } else {
-          plainPayload = JSON.parse(JSON.stringify(payload));
-        }
-      }
-
-      addDoc(collection(db, 'rooms', cleanRoom, 'signals'), {
-        senderId: peerId,
-        targetPeerId,
-        type,
-        payload: plainPayload,
-        timestamp: Date.now(),
-      }).catch((err) => console.error('[FirestoreSignal] Write error:', err));
-    },
-    [roomId, peerId]
-  );
-
-  /**
    * Send WebRTC offer
    */
   const sendOffer = useCallback(
     (targetPeerId: string, offer: RTCSessionDescriptionInit) => {
-      sendFirestoreSignal(targetPeerId, 'offer', offer);
       sendMessage({
         type: 'offer',
         roomId,
@@ -153,7 +113,7 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
         timestamp: Date.now(),
       });
     },
-    [sendMessage, sendFirestoreSignal, roomId, peerId]
+    [sendMessage, roomId, peerId]
   );
 
   /**
@@ -161,7 +121,6 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
    */
   const sendAnswer = useCallback(
     (targetPeerId: string, answer: RTCSessionDescriptionInit) => {
-      sendFirestoreSignal(targetPeerId, 'answer', answer);
       sendMessage({
         type: 'answer',
         roomId,
@@ -171,7 +130,7 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
         timestamp: Date.now(),
       });
     },
-    [sendMessage, sendFirestoreSignal, roomId, peerId]
+    [sendMessage, roomId, peerId]
   );
 
   /**
@@ -179,7 +138,6 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
    */
   const sendCandidate = useCallback(
     (targetPeerId: string, candidate: RTCIceCandidateInit) => {
-      sendFirestoreSignal(targetPeerId, 'candidate', candidate);
       sendMessage({
         type: 'candidate',
         roomId,
@@ -189,7 +147,7 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
         timestamp: Date.now(),
       });
     },
-    [sendMessage, sendFirestoreSignal, roomId, peerId]
+    [sendMessage, roomId, peerId]
   );
 
   /**
@@ -472,86 +430,8 @@ export function useSignaling(options: UseSignalingOptions): UseSignalingReturn {
     };
   }, [roomId, peerId, signalingUrl, autoConnect]);
 
-  /**
-   * Firestore Real-time Signaling Sync (Universal fallback for cross-server/cross-domain deployments like Vercel)
-   */
-  useEffect(() => {
-    if (!roomId || !peerId) return;
-
-    const cleanRoom = roomId.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    const peerDocRef = doc(db, 'rooms', cleanRoom, 'peers', peerId);
-
-    // Register peer in room
-    setDoc(
-      peerDocRef,
-      {
-        peerId,
-        isHost: !!callbacksRef.current.isHost,
-        lastSeen: Date.now(),
-      },
-      { merge: true }
-    ).catch((err) => console.error('[Firestore] Error registering peer:', err));
-
-    const knownPeers = new Set<string>();
-
-    // Listen to peers collection for room state updates
-    const peersCollRef = collection(db, 'rooms', cleanRoom, 'peers');
-    const unsubPeers = onSnapshot(peersCollRef, (snapshot) => {
-      const currentRemotePeers: string[] = [];
-      snapshot.forEach((docSnap) => {
-        const id = docSnap.id;
-        if (id !== peerId) {
-          currentRemotePeers.push(id);
-          if (!knownPeers.has(id)) {
-            knownPeers.add(id);
-            callbacksRef.current.onRoomState?.({
-              event: 'peer_joined',
-              peerId: id,
-            });
-          }
-        }
-      });
-
-      knownPeers.forEach((oldId) => {
-        if (!currentRemotePeers.includes(oldId)) {
-          knownPeers.delete(oldId);
-          callbacksRef.current.onRoomState?.({
-            event: 'peer_left',
-            peerId: oldId,
-          });
-        }
-      });
-
-      callbacksRef.current.onRoomState?.({ peers: currentRemotePeers });
-    });
-
-    // Listen for incoming signals targeted at this peer
-    const signalsCollRef = collection(db, 'rooms', cleanRoom, 'signals');
-    const qSignals = query(signalsCollRef, where('targetPeerId', '==', peerId));
-
-    const unsubSignals = onSnapshot(qSignals, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added') {
-          const data = change.doc.data();
-          callbacksRef.current.onSignal?.({
-            type: data.type,
-            roomId: cleanRoom,
-            peerId: data.senderId,
-            targetPeerId: peerId,
-            data: data.payload,
-            timestamp: data.timestamp || Date.now(),
-          });
-          deleteDoc(change.doc.ref).catch(() => {});
-        }
-      });
-    });
-
-    return () => {
-      unsubPeers();
-      unsubSignals();
-      deleteDoc(peerDocRef).catch(() => {});
-    };
-  }, [roomId, peerId]);
+  // There is deliberately no database-backed presence or signal listener here.
+  // WebSocket is preferred, with the bounded HTTP queue as a transient fallback.
 
   return {
     connected,

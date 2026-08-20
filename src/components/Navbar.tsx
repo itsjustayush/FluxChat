@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
+import { Activity, ChevronDown, Edit3, FolderClock, MessageSquare, Network, Save, ShieldCheck, X } from 'lucide-react';
 import { ViewMode, UserSession } from '../types';
 
 interface NavbarProps {
@@ -9,130 +11,109 @@ interface NavbarProps {
   latencyMs: number;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({
-  currentView,
-  setView,
-  session,
-  onUpdateNickname,
-  latencyMs,
-}) => {
+const NAV_ITEMS: Array<{ view: ViewMode; label: string; icon: typeof MessageSquare }> = [
+  { view: 'DASHBOARD', label: 'Rooms', icon: MessageSquare },
+  { view: 'ROOM', label: 'Active room', icon: Activity },
+  { view: 'NETWORK', label: 'Network', icon: Network },
+  { view: 'HISTORY', label: 'Memory', icon: FolderClock },
+];
+
+export function Navbar({ currentView, setView, session, onUpdateNickname, latencyMs }: NavbarProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(session.identifier);
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  const handleSaveName = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (nameInput.trim()) {
-      onUpdateNickname(nameInput.trim());
-    }
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, []);
+
+  useEffect(() => {
+    document.body.style.overflow = menuOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [menuOpen]);
+
+  const handleSaveName = (event: FormEvent) => {
+    event.preventDefault();
+    const cleanName = nameInput.trim().replace(/[^a-zA-Z0-9 _-]/g, '').slice(0, 18);
+    if (cleanName) onUpdateNickname(cleanName);
     setIsEditingName(false);
   };
 
+  const navigate = (view: ViewMode) => {
+    setView(view);
+    setMenuOpen(false);
+  };
+
   return (
-    <header className="fixed top-0 left-0 w-full z-50 bg-white/90 backdrop-blur-xl border-b border-[#192837]/10 shadow-xs transition-all">
-      <div className="flex justify-between items-center w-full px-4 sm:px-8 py-3 max-w-[1280px] mx-auto">
-        {/* Left: Brand logo */}
-        <div className="flex items-center gap-6 sm:gap-8">
-          <button
-            onClick={() => setView('DASHBOARD')}
-            className="text-xl font-bold font-heading text-[#192837] tracking-tighter hover:opacity-90 transition-opacity flex items-center gap-2 cursor-pointer"
-          >
-            <div className="w-3 h-3 bg-[#7342E2] rounded-full shadow-[0_0_12px_#7342E2] animate-pulse"></div>
-            <span>ULTRON<span className="text-[#7342E2]">.CHAT</span></span>
+    <>
+      <header className="sticky top-0 z-50 border-b border-white/10 bg-[#050505]/80 backdrop-blur-2xl">
+        <div className="mx-auto flex min-h-[76px] w-full max-w-[1440px] items-center justify-between gap-4 px-5 sm:px-8 lg:px-12">
+          <button onClick={() => navigate('DASHBOARD')} className="group flex items-center gap-3 text-left" aria-label="Go to FluxChat rooms">
+            <span className="grid h-10 w-10 place-items-center rounded-xl border border-white/15 bg-white/[.08] shadow-[0_0_24px_rgba(214,255,98,.08)] transition-transform duration-200 group-hover:scale-105">
+              <span className="h-3 w-3 rotate-45 rounded-[3px] bg-[#d6ff62] shadow-[0_0_18px_rgba(214,255,98,.8)]" />
+            </span>
+            <span className="hidden sm:block">
+              <span className="block font-semibold tracking-[-.04em] text-white">Flux<span className="text-[#d6ff62]">Chat</span></span>
+              <span className="block font-mono text-[9px] uppercase tracking-[.22em] text-white/40">Private by design</span>
+            </span>
           </button>
 
-          {/* Desktop Navigation Links */}
-          <nav className="hidden md:flex items-center gap-1.5">
-            <button
-              onClick={() => setView('DASHBOARD')}
-              className={`font-mono text-xs font-bold uppercase transition-all px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 ${
-                currentView === 'DASHBOARD'
-                  ? 'text-[#7342E2] bg-[#7342E2]/10 border border-[#7342E2]/30'
-                  : 'text-[#192837]/70 hover:text-[#192837] hover:bg-[#192837]/5'
-              }`}
-            >
-              <span className="material-symbols-outlined text-base">forum</span>
-              ROOMS
-            </button>
-
-            <button
-              onClick={() => setView('ROOM')}
-              className={`font-mono text-xs font-bold uppercase transition-all px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 ${
-                currentView === 'ROOM'
-                  ? 'text-[#7342E2] bg-[#7342E2]/10 border border-[#7342E2]/30'
-                  : 'text-[#192837]/70 hover:text-[#192837] hover:bg-[#192837]/5'
-              }`}
-            >
-              <span className="material-symbols-outlined text-base">chat</span>
-              ACTIVE CHAT
-            </button>
-
-            <button
-              onClick={() => setView('NETWORK')}
-              className={`font-mono text-xs font-bold uppercase transition-all px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 ${
-                currentView === 'NETWORK'
-                  ? 'text-[#7342E2] bg-[#7342E2]/10 border border-[#7342E2]/30'
-                  : 'text-[#192837]/70 hover:text-[#192837] hover:bg-[#192837]/5'
-              }`}
-            >
-              <span className="material-symbols-outlined text-base">hub</span>
-              TOPOLOGY
-            </button>
-
-            <button
-              onClick={() => setView('HISTORY')}
-              className={`font-mono text-xs font-bold uppercase transition-all px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 ${
-                currentView === 'HISTORY'
-                  ? 'text-[#7342E2] bg-[#7342E2]/10 border border-[#7342E2]/30'
-                  : 'text-[#192837]/70 hover:text-[#192837] hover:bg-[#192837]/5'
-              }`}
-            >
-              <span className="material-symbols-outlined text-base">folder_delete</span>
-              EPHEMERAL RAM
-            </button>
-          </nav>
-        </div>
-
-        {/* Right: Guest Badge & Nickname editor */}
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            {isEditingName ? (
-              <form onSubmit={handleSaveName} className="flex items-center gap-2">
-                <input
-                  type="text"
-                  autoFocus
-                  value={nameInput}
-                  onChange={(e) => setNameInput(e.target.value)}
-                  className="px-2.5 py-1 text-xs font-mono font-bold bg-white border border-[#7342E2] rounded-lg focus:outline-none text-[#192837]"
-                  maxLength={18}
-                />
-                <button
-                  type="submit"
-                  className="px-2.5 py-1 bg-[#7342E2] text-white text-xs font-mono font-bold rounded-lg cursor-pointer hover:bg-[#7342E2]/90"
-                >
-                  Save
+          <nav className="hidden items-center gap-1 rounded-full border border-white/10 bg-white/[.04] p-1 lg:flex" aria-label="Primary navigation">
+            {NAV_ITEMS.map(({ view, label, icon: Icon }) => {
+              const active = currentView === view;
+              return (
+                <button key={view} onClick={() => navigate(view)} className={`relative inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-medium transition-all duration-200 ${active ? 'bg-white text-[#111]' : 'text-white/55 hover:bg-white/[.08] hover:text-white'}`} aria-current={active ? 'page' : undefined}>
+                  <Icon size={14} strokeWidth={1.8} />
+                  {label}
                 </button>
-              </form>
-            ) : (
-              <button
-                onClick={() => {
-                  setNameInput(session.identifier);
-                  setIsEditingName(true);
-                }}
-                className="group flex items-center gap-2 px-3 py-1.5 bg-white/80 border border-[#192837]/15 hover:border-[#7342E2]/50 rounded-full transition-all cursor-pointer shadow-2xs"
-                title="Click to edit guest nickname"
-              >
-                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                <span className="font-mono text-xs font-bold text-[#192837] group-hover:text-[#7342E2] transition-colors">
-                  {session.identifier}
-                </span>
-                <span className="material-symbols-outlined text-sm text-[#192837]/40 group-hover:text-[#7342E2]">
-                  edit
-                </span>
-              </button>
-            )}
+              );
+            })}
+          </nav>
+
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="hidden items-center gap-2 rounded-full border border-[#d6ff62]/20 bg-[#d6ff62]/[.06] px-3 py-2 xl:flex" title="Local session status">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#d6ff62] shadow-[0_0_10px_#d6ff62]" />
+              <span className="font-mono text-[10px] uppercase tracking-[.16em] text-[#d6ff62]">{latencyMs}ms secure link</span>
+            </div>
+
+            <div className="relative">
+              {isEditingName ? (
+                <form onSubmit={handleSaveName} className="flex items-center gap-1 rounded-full border border-white/20 bg-white/[.08] p-1">
+                  <label htmlFor="nickname" className="sr-only">Guest nickname</label>
+                  <input id="nickname" autoFocus value={nameInput} onChange={(event) => setNameInput(event.target.value)} maxLength={18} className="w-28 bg-transparent px-2 text-xs text-white outline-none" />
+                  <button type="submit" className="grid h-7 w-7 place-items-center rounded-full bg-[#d6ff62] text-[#111]" aria-label="Save nickname"><Save size={13} /></button>
+                  <button type="button" onClick={() => setIsEditingName(false)} className="grid h-7 w-7 place-items-center rounded-full text-white/50 hover:bg-white/10 hover:text-white" aria-label="Cancel nickname edit"><X size={13} /></button>
+                </form>
+              ) : (
+                <button onClick={() => { setNameInput(session.identifier); setIsEditingName(true); }} className="group flex items-center gap-2 rounded-full border border-white/15 bg-white/[.06] px-3 py-2 transition-colors hover:border-white/30 hover:bg-white/[.1]" aria-label={`Edit nickname ${session.identifier}`}>
+                  <span className="grid h-6 w-6 place-items-center rounded-full bg-white text-[10px] font-bold text-[#111]">{session.identifier.slice(0, 1).toUpperCase()}</span>
+                  <span className="hidden max-w-24 truncate text-xs font-medium text-white/85 sm:block">{session.identifier}</span>
+                  <Edit3 size={13} className="text-white/35 transition-colors group-hover:text-[#d6ff62]" />
+                </button>
+              )}
+            </div>
+
+            <button onClick={() => setMenuOpen((open) => !open)} className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-white/[.06] text-white lg:hidden" aria-expanded={menuOpen} aria-controls="mobile-nav" aria-label={menuOpen ? 'Close navigation menu' : 'Open navigation menu'}>
+              {menuOpen ? <X size={18} /> : <ChevronDown size={18} />}
+            </button>
           </div>
         </div>
-      </div>
-    </header>
+
+        <div id="mobile-nav" className={`border-t border-white/10 bg-[#080808] px-5 py-4 lg:hidden ${menuOpen ? 'block' : 'hidden'}`}>
+          <nav className="grid gap-2" aria-label="Mobile navigation">
+            {NAV_ITEMS.map(({ view, label, icon: Icon }) => (
+              <button key={view} onClick={() => navigate(view)} className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-sm ${currentView === view ? 'bg-white text-[#111]' : 'text-white/65 hover:bg-white/[.08] hover:text-white'}`}>
+                <Icon size={16} />{label}
+              </button>
+            ))}
+          </nav>
+          <div className="mt-4 flex items-center gap-2 border-t border-white/10 pt-4 font-mono text-[10px] uppercase tracking-[.18em] text-white/45"><ShieldCheck size={14} className="text-[#d6ff62]" /> Session data stays in this tab</div>
+        </div>
+      </header>
+    </>
   );
-};
+}

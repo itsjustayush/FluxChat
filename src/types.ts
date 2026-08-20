@@ -36,7 +36,7 @@ export interface BundleItem {
   timestamp: number;
   carbonFootprintGrams: number; // CO2e in grams
   peerSeeds: number;
-  encryptionStatus: 'AES-256-GCM VERIFIED';
+  encryptionStatus: 'WEBRTC DTLS TRANSPORT' | 'AES-256-GCM VERIFIED';
 }
 
 export interface TransferProgress {
